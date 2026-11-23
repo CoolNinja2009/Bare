@@ -48,11 +48,12 @@ static void shadow_of(const BareBox *b, float s, float op, float out[4], BareCol
 }
 
 /* Background, border and (unless the glass draws it) shadow in one command. */
-static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with_shadow) {
+static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with_shadow, bool with_fill,
+                      bool with_border) {
     const BareBox *b = &e->box;
     float s = ctx->scale * e->vscale, op = e->opacity;
-    bool fill = b->color.a > 0;
-    bool border = b->border > 0 && b->border_color.a > 0;
+    bool fill = with_fill && b->color.a > 0;
+    bool border = with_border && b->border > 0 && b->border_color.a > 0;
     bool shadow = with_shadow && b->shadow.color.a > 0;
     if (!(fill || border || shadow)) return;
 
@@ -69,6 +70,20 @@ static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with
     for (int k = 0; k < 4; k++) rc->radius[k] = radius;
     if (shadow) shadow_of(b, s, op, rc->shadow, &rc->shadow_color);
     else rc->shadow_color = color_f(NONE, op);
+}
+
+/* An image stretched over the box, inside its rounded corners. */
+static void emit_image(BareContext *ctx, const BareElem *e, BareRect r) {
+    BareDrawCmd *cmd = push_cmd(ctx);
+    if (!cmd) return;
+    cmd->kind = BARE_CMD_IMAGE;
+    BareImageCmd *im = &cmd->as.image;
+    float radius = BARE__MIN(e->box.radius * ctx->scale * e->vscale, BARE__MIN(r.w, r.h) * 0.5f);
+    im->texture = e->box.image;
+    im->rect = r;
+    im->uv = (BareRect){ 0, 0, 1, 1 };
+    for (int k = 0; k < 4; k++) im->radius[k] = radius;
+    im->tint = (BareColorF){ 1, 1, 1, e->opacity };
 }
 
 /* Glass siblings with .merge melt together: consecutive ones join the
@@ -118,11 +133,16 @@ void bare__emit(BareContext *ctx) {
         if (e->opacity <= 0) continue;
         BareRect r = place(e, s);
         if (r.w <= 0 || r.h <= 0) continue;
+        bool image = e->box.image && bare__image(ctx, e->box.image);
         if (e->glass) {
             emit_glass(ctx, i, r, &last_glass_cmd, &last_glass_parent);
-            emit_rect(ctx, e, r, false);   /* frost colour and border on top of the glass */
+            emit_rect(ctx, e, r, false, true, !image);   /* frost colour and border on top of the glass */
         } else {
-            emit_rect(ctx, e, r, true);
+            emit_rect(ctx, e, r, true, true, !image);
+        }
+        if (image) {   /* over the background, under the border */
+            emit_image(ctx, e, r);
+            emit_rect(ctx, e, r, false, false, true);
         }
     }
 

@@ -94,6 +94,31 @@ in clicks; right click; key pressed is true for one frame only.
 **Example:** `examples/buttons.c`: boxes that change colour on hover and press and count clicks.
 **Done when:** tests pass and the example feels instant (no visible frame lag on click).
 
+## [x] Canvas: your own GPU shaders (added by the user, with the Fluids port)
+
+Done 2026-11-23. What `<canvas>` + WebGL are to a web page, as general features (nothing fluid-specific in Bare).
+
+- `bare_canvas(.width, .height, .format, .nearest, .repeat)`: an image shaders draw into; RGBA8, RGBA16F, RG16F, R16F
+  (narrow float formats fall back to wider ones where unsupported, as WebGL apps do). Starts transparent black.
+- `bare_shader(&code)` / `bare_pass(.target, .shader, .inputs = {...}, BARE_PARAMS(p), .blend)`: a fragment shader
+  over every pixel of the target (one fullscreen triangle, `shaders/pass.glsl`); up to 8 inputs; params as a std140
+  block; blend NONE / ADD / OVER. Passes run on the GPU in call order before the frame is drawn.
+- `bare_add_shaders()` (CMake): GLSL 450 → SPIR-V + DXIL + MSL + reflection, into a header of `BareShaderCode`
+  values; falls back to the committed header without the tools.
+- `.image` boxes (images and canvases) drawn over `.color`, rounded by `.radius`, under the border.
+  `bare_image_size`, `bare_pixel_scale()` (devicePixelRatio).
+- Core: GPU ops queued in call order (`src/core/gpu.c`), published with the frame's draw list; images and canvases
+  share one id space; mistakes log file:line and are skipped.
+
+**Example:** `examples/fluid/`: Pavel Dobryakov's WebGL fluid simulation (MIT) on canvases, 14 shaders, with a
+frosted-glass settings panel built from Bare boxes; sleeps once the fluid settles.
+**Tests:** `test_gpu.c` (op order, once-only delivery, no steady-state allocation, mistakes, id reuse, image box order).
+**Benchmark:** `bench/` against the WebGL original in Edge: same GPU cost, ~3x less CPU, ~4-5x less memory, 0 when
+idle; startup not yet a win. See bench/README.md.
+
+**Still to do:** update an existing image's pixels (video, GIF previews); read a canvas back to the CPU; compute
+shaders; passes into a sub-rectangle (scissor) of a canvas; vertex input for meshes.
+
 ## [ ] M4: Animation system
 
 **Goal:** every animatable property moves toward its target with easing curves or springs, interruptibly.
@@ -229,6 +254,10 @@ needed; **beyond** = something the web can't do as easily.
 | `filter`, `mix-blend-mode` | `.filter`, blend modes | M10 |
 | `clip-path`, `mask`, rounded overflow clip | rounded clipping | later |
 | `<img>`, `object-fit` | `.image`, `bare_image_load`; object-fit in M10 | M5 |
+| `<canvas>` + WebGL / WebGL2 fragment shaders, render to texture | `bare_canvas`, `bare_shader`, `bare_pass` | done |
+| float textures (`RGBA16F`, `RG16F`, `R16F`), additive blending | `.format`, `.blend = BARE_BLEND_ADD` | done |
+| `devicePixelRatio` | `bare_pixel_scale()` | done |
+| `texImage2D` updates every frame (video), `readPixels`, compute | | later |
 | **Transforms and animation** | | |
 | `transform: translate()` | `.offset` (sub-pixel smooth, children included) | done |
 | `transform: scale()` | `.scale` (drawn and hit-tested) | done |
@@ -258,15 +287,18 @@ needed; **beyond** = something the web can't do as easily.
 | accessibility (screen readers) | platform a11y trees | later |
 | runs in a browser | sokol backend + Emscripten | M9 |
 | **Cost** | | |
-| idle CPU | 0 (sleeps until input) | beyond |
-| startup, size | milliseconds; one small exe, no runtime | beyond |
+| idle CPU and GPU | 0 (sleeps until input; a page's requestAnimationFrame loop never stops) | beyond |
+| CPU and memory while animating | Fluids: ~3x less CPU, ~4-5x less memory than Edge (bench/README.md) | beyond |
+| size | one ~4 MB exe with SDL3 static, no runtime | beyond |
+| startup | ~0.6 s today, almost all GPU driver setup; target: first paint in tens of ms | not yet |
 
 ---
 
 ## Needed for the ScreenPlus port (`Wallpaper+\ScreenPlus`, ~9k lines of Direct2D/DirectWrite UI in `src/ui/`)
 
 To be scheduled once M1–M9 land, after an inventory of ScreenPlus's screens: text input and editing (it has
-`textedit.c`), flex-wrap or grid for the thumbnail library, textures updated every frame (GIF/video previews),
+`textedit.c`), flex-wrap or grid for the thumbnail library, textures updated every frame (GIF/video previews; canvases exist,
+updating an image's pixels doesn't yet),
 FreeType + HarfBuzz for DirectWrite-level text, Linux (SDL3 already covers it).
 
 ## Later (not scheduled)

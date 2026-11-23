@@ -49,6 +49,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
     bare__free(&ctx->alloc, ctx->hits, (size_t)ctx->hit_cap * sizeof *ctx->hits);
+    bare__gpu_free(ctx);
     BareAllocator alloc = ctx->alloc;
     bare__free(&alloc, ctx, sizeof *ctx);
 }
@@ -87,6 +88,7 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
     bare__tree_end(ctx);
     bare__layout(ctx);
     bare__emit(ctx);
+    bare__gpu_publish(ctx);   /* images, shaders and passes called since the last frame */
 
     /* Remember where everything was drawn: BareState.rect and the input that
      * arrives before the next frame both use it. Then forget elements that

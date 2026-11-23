@@ -109,8 +109,52 @@ typedef struct BareTextureUpload {
     bool          destroy;         /* free the texture instead */
 } BareTextureUpload;
 
+/* Images, canvases, shaders and passes the app asked for since the last draw
+ * list, in call order. Run them before drawing the list's commands. */
+typedef enum BareGpuOpKind {
+    BARE_GPU_IMAGE_CREATE,     /* image: id, w, h, format, nearest, repeat, renderable */
+    BARE_GPU_IMAGE_UPLOAD,     /* image: id, pixels (RGBA8, w * h * 4 bytes) */
+    BARE_GPU_IMAGE_DESTROY,
+    BARE_GPU_SHADER_CREATE,
+    BARE_GPU_SHADER_DESTROY,
+    BARE_GPU_PASS
+} BareGpuOpKind;
+
+typedef struct BareGpuImage {
+    uint32_t    id;
+    int         width, height;
+    BareFormat  format;
+    bool        nearest, repeat;
+    bool        renderable;    /* a canvas: passes draw into it */
+    const void *pixels;        /* IMAGE_UPLOAD */
+} BareGpuImage;
+
+typedef struct BareGpuShader {
+    uint32_t              id;
+    const BareShaderCode *code;
+} BareGpuShader;
+
+typedef struct BareGpuPass {
+    uint32_t    target, shader;
+    uint32_t    inputs[BARE_MAX_INPUTS];
+    int         input_count;   /* inputs after the last non-zero one are unbound */
+    const void *params;
+    int         params_size;
+    BareBlend   blend;
+} BareGpuPass;
+
+typedef struct BareGpuOp {
+    BareGpuOpKind kind;
+    union {
+        BareGpuImage  image;
+        BareGpuShader shader;
+        BareGpuPass   pass;
+    } as;
+} BareGpuOp;
+
 typedef struct BareDrawList {
-    const BareTextureUpload *uploads;  int upload_count;   /* process first */
+    const BareGpuOp         *ops;      int op_count;       /* first, in order */
+    const BareTextureUpload *uploads;  int upload_count;   /* then these (glyph atlas, M5) */
     const BareDrawCmd       *cmds;     int cmd_count;
     int        width, height;          /* framebuffer, physical pixels */
     float      scale;                  /* physical / logical */

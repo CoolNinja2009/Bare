@@ -107,6 +107,29 @@ typedef struct BareElem {
 
 #define BARE__MAX_DEPTH 256
 
+/* ---- images, shaders and passes (gpu.c) ---------------------------------- */
+
+typedef struct BareImageRec {
+    int        width, height;
+    BareFormat format;
+    bool       alive, canvas;
+    int32_t    next_free;
+} BareImageRec;
+
+typedef struct BareShaderRec {
+    const BareShaderCode *code;
+    bool                  alive;
+    int32_t               next_free;
+} BareShaderRec;
+
+/* Ops in call order, with the bytes they point to (params, pixels) copied in.
+ * While queued, pointers hold offsets into `data`; they become real when the
+ * queue is handed to the renderer. */
+typedef struct BareGpuQueue {
+    BareGpuOp     *ops;  int count, cap;
+    unsigned char *data; int data_size, data_cap;
+} BareGpuQueue;
+
 /* ---- interaction (hit.c, input.c) ---------------------------------------- */
 
 /* One element as last drawn, for hit testing. Same order and indices as the
@@ -149,6 +172,10 @@ struct BareContext {
     uint8_t       key_down[BARE_KEY_COUNT_], key_pressed[BARE_KEY_COUNT_];
     BareCursor    cursor;
 
+    BareImageRec  *images;  int image_count, image_cap, image_free;   /* by id - 1 */
+    BareShaderRec *shaders; int shader_count, shader_cap, shader_free;
+    BareGpuQueue   gpu_pending, gpu_published;
+
     BareDrawCmd  *cmds;    int cmd_count, cmd_cap;
     BareDrawList  list;
 
@@ -182,6 +209,11 @@ int  bare__hit_find(const BareContext *ctx, BareVec2 p);              /* topmost
 void bare__hit_chain(const BareContext *ctx, int index, BareChain *out);
 bool bare__chain_has(const BareChain *c, BareId id);
 BareRect bare__visual_rect(const BareElem *e);
+
+/* gpu.c */
+void bare__gpu_publish(BareContext *ctx);       /* pending ops -> the draw list */
+void bare__gpu_free(BareContext *ctx);
+const BareImageRec *bare__image(const BareContext *ctx, BareImage id);   /* NULL unless alive */
 
 /* input.c */
 void bare__input_begin(BareContext *ctx);       /* hover chain from the mouse */

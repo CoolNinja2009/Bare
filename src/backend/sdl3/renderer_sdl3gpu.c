@@ -36,10 +36,27 @@ typedef struct GlassFrag {
 typedef struct GlassDraw { GlassVert vert; GlassFrag frag; } GlassDraw;
 
 typedef struct Texture {
-    SDL_GPUTexture *tex;
-    int w, h;
-    BareTexFormat format;
+    SDL_GPUTexture      *tex;
+    int                  w, h;
+    BareTexFormat        format;        /* glyph atlas uploads */
+    SDL_GPUTextureFormat gpu_format;    /* images and canvases */
+    SDL_GPUSampler      *sampler;       /* NULL = the default (bilinear, clamped) */
 } Texture;
+
+/* An app shader for canvas passes, with a pipeline per (target format, blend). */
+typedef struct PassPipeline {
+    SDL_GPUTextureFormat     format;
+    BareBlend                blend;
+    SDL_GPUGraphicsPipeline *pipeline;
+} PassPipeline;
+
+#define MAX_PASS_PIPELINES 8
+
+typedef struct UserShader {
+    SDL_GPUShader *fs;
+    PassPipeline   pipes[MAX_PASS_PIPELINES];
+    int            pipe_count;
+} UserShader;
 
 #define MAX_CLIP_DEPTH 64
 
@@ -49,6 +66,8 @@ typedef struct GpuRenderer {
     SDL_GPUGraphicsPipeline *pipeline, *glass_pipeline;
     SDL_GPUTextureFormat     format;
     SDL_GPUSampler          *sampler, *mip_sampler;
+    SDL_GPUSampler          *samplers[4];        /* [nearest][repeat]; [0][0] = sampler */
+    SDL_GPUShader           *pass_vs;            /* shaders/pass.glsl */
     SDL_GPUTexture          *white;
     SDL_GPUTexture          *scene, *backdrop;
     Uint32                   scene_w, scene_h;
@@ -64,6 +83,7 @@ typedef struct GpuRenderer {
     Batch     *batches;   Uint32 batch_count, batches_alloc;
     GlassDraw *glass;     Uint32 glass_count, glass_alloc;
     Texture   *textures;  Uint32 texture_cap;
+    UserShader *shaders;  Uint32 shader_cap;
 
     const char              *capture_path;
     SDL_GPUTransferBuffer   *capture_xfer;
@@ -224,6 +244,19 @@ static bool init(void *self, const BarePlatform *platform) {
     si.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;   /* trilinear for the frosted backdrop */
     si.max_lod = 16.0f;
     gpu.mip_sampler = SDL_CreateGPUSampler(gpu.device, &si);
+    si.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    si.max_lod = 0;
+    for (int k = 0; k < 4; k++) {   /* for images and canvases: [nearest][repeat] */
+        bool nearest = k & 2, repeat = k & 1;
+        si.min_filter = si.mag_filter = nearest ? SDL_GPU_FILTER_NEAREST : SDL_GPU_FILTER_LINEAR;
+        si.address_mode_u = si.address_mode_v = si.address_mode_w =
+            repeat ? SDL_GPU_SAMPLERADDRESSMODE_REPEAT : SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        gpu.samplers[k] = k == 0 ? gpu.sampler : SDL_CreateGPUSampler(gpu.device, &si);
+        if (!gpu.samplers[k]) return false;
+    }
+    ShaderCode pass_v = CODE(pass_vert, 0, 0);
+    gpu.pass_vs = make_shader(SDL_GPU_SHADERSTAGE_VERTEX, pass_v);
+    if (!gpu.pass_vs) return false;
 
     /* A 1x1 white texture so the sampler binding is always valid. */
     gpu.white = make_texture(1, 1, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 1);
@@ -253,6 +286,14 @@ static void shutdown_renderer(void *self) {
         if (gpu.textures[i].tex) SDL_ReleaseGPUTexture(gpu.device, gpu.textures[i].tex);
     }
     SDL_free(gpu.textures);
+    for (Uint32 i = 0; i < gpu.shader_cap; i++) {
+        UserShader *u = &gpu.shaders[i];
+        for (int k = 0; k < u->pipe_count; k++) SDL_ReleaseGPUGraphicsPipeline(gpu.device, u->pipes[k].pipeline);
+        if (u->fs) SDL_ReleaseGPUShader(gpu.device, u->fs);
+    }
+    SDL_free(gpu.shaders);
+    for (int k = 1; k < 4; k++) SDL_ReleaseGPUSampler(gpu.device, gpu.samplers[k]);
+    if (gpu.pass_vs) SDL_ReleaseGPUShader(gpu.device, gpu.pass_vs);
     SDL_free(gpu.instances);
     SDL_free(gpu.batches);
     SDL_free(gpu.glass);
@@ -280,6 +321,8 @@ static bool grow(void **items, Uint32 *cap, Uint32 need, size_t size) {
     while (n < need) n *= 2;
     void *p = SDL_realloc(*items, n * size);
     if (!p) return false;
+    /* New slots must read as empty: textures and shaders are looked up by id. */
+    memset((char *)p + (size_t)*cap * size, 0, (size_t)(n - *cap) * size);
     *items = p;
     *cap = n;
     return true;
@@ -551,11 +594,196 @@ static void save_capture(Uint32 w, Uint32 h) {
     SDL_UnmapGPUTransferBuffer(gpu.device, gpu.capture_xfer);
 }
 
+/* ---- images, canvases, shaders and passes -------------------------------- */
+
+/* The first format the device can sample (and render to, for canvases);
+ * narrower float formats fall back to wider ones, as WebGL apps do. */
+static SDL_GPUTextureFormat image_format(BareFormat f, bool renderable) {
+    static const SDL_GPUTextureFormat floats[] = { SDL_GPU_TEXTUREFORMAT_R16_FLOAT, SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT,
+                                                   SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT };
+    static const SDL_GPUTextureFormat rgba8[] = { SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM };
+    const SDL_GPUTextureFormat *list = rgba8;
+    int n = 1;
+    switch (f) {
+    case BARE_R16F: list = floats; n = 3; break;
+    case BARE_RG16F: list = floats + 1; n = 2; break;
+    case BARE_RGBA16F: list = floats + 2; n = 1; break;
+    default: break;
+    }
+    SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | (renderable ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
+    for (int i = 0; i < n; i++)
+        if (SDL_GPUTextureSupportsFormat(gpu.device, list[i], SDL_GPU_TEXTURETYPE_2D, usage)) return list[i];
+    return SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
+static void create_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
+    Texture *t = texture_slot(im->id);
+    if (!t) return;
+    if (t->tex) SDL_ReleaseGPUTexture(gpu.device, t->tex);
+    memset(t, 0, sizeof *t);
+    SDL_GPUTextureFormat f = image_format(im->format, im->renderable);
+    if (f == SDL_GPU_TEXTUREFORMAT_INVALID) {
+        SDL_Log("bare: no supported texture format for image %u (format %d)", (unsigned)im->id, (int)im->format);
+        return;
+    }
+    SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_SAMPLER |
+                                     (im->renderable ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
+    t->tex = make_texture(im->width, im->height, f, usage, 1);
+    if (!t->tex) {
+        SDL_Log("bare: creating a %dx%d image failed: %s", im->width, im->height, SDL_GetError());
+        return;
+    }
+    t->w = im->width;
+    t->h = im->height;
+    t->gpu_format = f;
+    t->sampler = gpu.samplers[(im->nearest ? 2 : 0) + (im->repeat ? 1 : 0)];
+    if (im->renderable) {   /* canvases start transparent black, not with leftover memory */
+        SDL_GPUColorTargetInfo ct;
+        SDL_zero(ct);
+        ct.texture = t->tex;
+        ct.load_op = SDL_GPU_LOADOP_CLEAR;
+        ct.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &ct, 1, NULL));
+    }
+}
+
+static void upload_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
+    if (im->id >= gpu.texture_cap || !gpu.textures[im->id].tex || !im->pixels) return;
+    Texture *t = &gpu.textures[im->id];
+    Uint32 bytes = (Uint32)t->w * (Uint32)t->h * 4;
+    if (!ensure_xfer(&gpu.upload_xfer, &gpu.upload_cap, bytes, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD)) return;
+    void *dst = SDL_MapGPUTransferBuffer(gpu.device, gpu.upload_xfer, true);
+    if (!dst) return;
+    memcpy(dst, im->pixels, bytes);
+    SDL_UnmapGPUTransferBuffer(gpu.device, gpu.upload_xfer);
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo src = { .transfer_buffer = gpu.upload_xfer };
+    SDL_GPUTextureRegion region = { .texture = t->tex, .w = (Uint32)t->w, .h = (Uint32)t->h, .d = 1 };
+    SDL_UploadToGPUTexture(copy, &src, &region, false);
+    SDL_EndGPUCopyPass(copy);
+}
+
+static UserShader *shader_slot(Uint32 id) {
+    if (!grow((void **)&gpu.shaders, &gpu.shader_cap, id + 1, sizeof(UserShader))) return NULL;
+    return &gpu.shaders[id];
+}
+
+static void destroy_shader(Uint32 id) {
+    if (id >= gpu.shader_cap) return;
+    UserShader *u = &gpu.shaders[id];
+    for (int k = 0; k < u->pipe_count; k++) SDL_ReleaseGPUGraphicsPipeline(gpu.device, u->pipes[k].pipeline);
+    if (u->fs) SDL_ReleaseGPUShader(gpu.device, u->fs);
+    memset(u, 0, sizeof *u);
+}
+
+static void create_shader(const BareGpuShader *sh) {
+    if (!shader_slot(sh->id)) return;
+    destroy_shader(sh->id);
+    const BareShaderCode *c = sh->code;
+    ShaderCode code = { c->spirv, c->dxil, c->msl, c->spirv_size, c->dxil_size, c->msl_size,
+                        (Uint32)c->uniform_buffers, (Uint32)c->samplers };
+    gpu.shaders[sh->id].fs = make_shader(SDL_GPU_SHADERSTAGE_FRAGMENT, code);
+}
+
+static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, SDL_GPUTextureFormat format, BareBlend blend) {
+    for (int k = 0; k < u->pipe_count; k++)
+        if (u->pipes[k].format == format && u->pipes[k].blend == blend) return u->pipes[k].pipeline;
+    if (u->pipe_count == MAX_PASS_PIPELINES) return NULL;
+
+    SDL_GPUColorTargetDescription target;
+    SDL_zero(target);
+    target.format = format;
+    if (blend != BARE_BLEND_NONE) {
+        SDL_GPUBlendFactor dst = blend == BARE_BLEND_ADD ? SDL_GPU_BLENDFACTOR_ONE
+                                                         : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        target.blend_state.enable_blend = true;
+        target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        target.blend_state.dst_color_blendfactor = dst;
+        target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        target.blend_state.dst_alpha_blendfactor = dst;
+        target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    }
+    SDL_GPUGraphicsPipelineCreateInfo info;
+    SDL_zero(info);
+    info.vertex_shader = gpu.pass_vs;
+    info.fragment_shader = u->fs;
+    info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    info.target_info.color_target_descriptions = &target;
+    info.target_info.num_color_targets = 1;
+    SDL_GPUGraphicsPipeline *p = SDL_CreateGPUGraphicsPipeline(gpu.device, &info);
+    if (!p) {
+        SDL_Log("bare: canvas pass pipeline failed: %s", SDL_GetError());
+        return NULL;
+    }
+    u->pipes[u->pipe_count++] = (PassPipeline){ format, blend, p };
+    return p;
+}
+
+static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p) {
+    if (p->target >= gpu.texture_cap || !gpu.textures[p->target].tex) return;
+    if (p->shader >= gpu.shader_cap || !gpu.shaders[p->shader].fs) return;
+    Texture *t = &gpu.textures[p->target];
+    SDL_GPUGraphicsPipeline *pipeline = pass_pipeline(&gpu.shaders[p->shader], t->gpu_format, p->blend);
+    if (!pipeline) return;
+
+    SDL_GPUTextureSamplerBinding inputs[BARE_MAX_INPUTS];
+    int n = SDL_min(p->input_count, BARE_MAX_INPUTS);
+    for (int i = 0; i < n; i++) {
+        Uint32 id = p->inputs[i];
+        bool ok = id && id < gpu.texture_cap && gpu.textures[id].tex;
+        inputs[i].texture = ok ? gpu.textures[id].tex : gpu.white;
+        inputs[i].sampler = ok && gpu.textures[id].sampler ? gpu.textures[id].sampler : gpu.sampler;
+    }
+
+    SDL_GPUColorTargetInfo ct;
+    SDL_zero(ct);
+    ct.texture = t->tex;
+    ct.store_op = SDL_GPU_STOREOP_STORE;
+    if (p->blend == BARE_BLEND_NONE) {
+        /* Every pixel is overwritten, so the old contents needn't be loaded.
+         * No cycling: a canvas written many times a frame (ping-pong
+         * simulations) would get a new copy of its memory for every write. */
+        ct.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    } else {
+        ct.load_op = SDL_GPU_LOADOP_LOAD;
+    }
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ct, 1, NULL);
+    if (!pass) return;
+    SDL_BindGPUGraphicsPipeline(pass, pipeline);
+    if (n) SDL_BindGPUFragmentSamplers(pass, 0, inputs, (Uint32)n);
+    if (p->params_size > 0) SDL_PushGPUFragmentUniformData(cmd, 0, p->params, (Uint32)p->params_size);
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+}
+
+static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
+    for (int i = 0; i < list->op_count; i++) {
+        const BareGpuOp *op = &list->ops[i];
+        switch (op->kind) {
+        case BARE_GPU_IMAGE_CREATE: create_image(cmd, &op->as.image); break;
+        case BARE_GPU_IMAGE_UPLOAD: upload_image(cmd, &op->as.image); break;
+        case BARE_GPU_IMAGE_DESTROY: {
+            Uint32 id = op->as.image.id;
+            if (id < gpu.texture_cap && gpu.textures[id].tex) SDL_ReleaseGPUTexture(gpu.device, gpu.textures[id].tex);
+            if (id < gpu.texture_cap) memset(&gpu.textures[id], 0, sizeof gpu.textures[id]);
+            break;
+        }
+        case BARE_GPU_SHADER_CREATE: create_shader(&op->as.shader); break;
+        case BARE_GPU_SHADER_DESTROY: destroy_shader(op->as.shader.id); break;
+        case BARE_GPU_PASS: run_pass(cmd, &op->as.pass); break;
+        }
+    }
+}
+
 static void render(void *self, const BareDrawList *list) {
     (void)self;
     build(list);
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu.device);
     if (!cmd) return;
+    run_ops(cmd, list);   /* images, shaders and canvas passes, in the app's call order */
 
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     apply_uploads(copy, list);
@@ -603,9 +831,12 @@ static void render(void *self, const BareDrawList *list) {
             bound = true;
         }
         SDL_GPUTexture *tex = gpu.white;
-        if (b->texture && b->texture < gpu.texture_cap && gpu.textures[b->texture].tex)
+        SDL_GPUSampler *smp = gpu.sampler;
+        if (b->texture && b->texture < gpu.texture_cap && gpu.textures[b->texture].tex) {
             tex = gpu.textures[b->texture].tex;
-        SDL_GPUTextureSamplerBinding tsb = { .texture = tex, .sampler = gpu.sampler };
+            if (gpu.textures[b->texture].sampler) smp = gpu.textures[b->texture].sampler;
+        }
+        SDL_GPUTextureSamplerBinding tsb = { .texture = tex, .sampler = smp };
         SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
         /* Offset the binding instead of using first_instance (portable). */
         SDL_GPUBufferBinding vb = { .buffer = gpu.instance_buf, .offset = b->first * (Uint32)sizeof(Instance) };

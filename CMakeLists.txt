@@ -7,6 +7,7 @@ set_property(CACHE BARE_BACKEND PROPERTY STRINGS SDL3)
 # not when an app pulls it in with add_subdirectory or FetchContent.
 option(BARE_BUILD_TESTS "Build the headless unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(BARE_BUILD_EXAMPLES "Build the examples" ${PROJECT_IS_TOP_LEVEL})
+option(BARE_BUILD_BENCH "Build the benchmarks (bench/; needs the examples)" OFF)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -39,6 +40,7 @@ add_library(bare_core STATIC
     src/core/emit.c
     src/core/hit.c
     src/core/input.c
+    src/core/gpu.c
 )
 target_include_directories(bare_core PUBLIC include PRIVATE src/core)
 target_compile_options(bare_core PRIVATE ${BARE_STRICT})
@@ -93,6 +95,9 @@ if(BARE_GLSLC AND BARE_SHADERCROSS)
         VERBATIM)
 endif()
 
+# Apps' own shaders for canvas passes: bare_add_shaders() (cmake/BareShaders.cmake).
+include(${PROJECT_SOURCE_DIR}/cmake/BareShaders.cmake)
+
 # ---------------------------------------------------------------------------
 if(BARE_BUILD_TESTS)
     enable_testing()
@@ -100,4 +105,7 @@ if(BARE_BUILD_TESTS)
 endif()
 if(BARE_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+if(BARE_BUILD_BENCH AND BARE_BUILD_EXAMPLES)
+    add_subdirectory(bench)
 endif()

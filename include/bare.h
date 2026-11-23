@@ -240,9 +240,77 @@ typedef uint32_t BareImage;   /* 0 = no image */
 
 BareFont  bare_font_load(const char *path);                       /* TTF/OTF; 0 on failure */
 BareFont  bare_font_from_memory(const void *data, int size);      /* data must outlive the font */
-BareImage bare_image_load(const char *path);                      /* PNG/JPG; 0 on failure */
+BareImage bare_image_load(const char *path);                      /* (M5) PNG/JPG; 0 on failure */
 BareImage bare_image_from_pixels(int width, int height, const void *rgba8);  /* pixels are copied */
-void      bare_image_free(BareImage image);
+void      bare_image_free(BareImage image);                       /* images and canvases */
+BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
+
+/* ------------------------------------------------------------------------ */
+/* Canvas: your own GPU shaders (what WebGL is to a <canvas>)               */
+/* ------------------------------------------------------------------------ */
+
+/* A canvas is an image that shaders draw into. Show it with .image like any
+ * other image; use it as a shader input; draw into it every frame for
+ * simulations, effects and generated backgrounds.
+ *
+ *   BareImage sky = bare_canvas(.width = 512, .height = 512);
+ *   bare_pass(.target = sky, .shader = clouds, BARE_PARAMS(p));
+ *   bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = sky);
+ *
+ * A pass runs a fragment shader once for every pixel of its target. Passes run
+ * on the GPU in the order they're called, before the frame they're called in is
+ * drawn (or the next one, when called between frames). Shaders are GLSL 450,
+ * compiled at build time by the bare_add_shaders() CMake function, which also
+ * documents the conventions they follow. */
+
+typedef enum BareFormat {
+    BARE_RGBA8 = 0,       /* default: 8-bit colour */
+    BARE_RGBA16F,         /* half floats: HDR colour, simulation state */
+    BARE_RG16F,           /* two half floats (e.g. velocity) */
+    BARE_R16F             /* one half float (e.g. pressure) */
+} BareFormat;
+
+typedef struct BareCanvas {
+    int width, height;    /* pixels (not scaled by DPI) */
+    BareFormat format;
+    bool nearest;         /* sample without filtering (default: bilinear) */
+    bool repeat;          /* sampling outside 0..1 wraps (default: clamps to the edge) */
+} BareCanvas;
+
+#define bare_canvas(...)  bare_canvas_(&(BareCanvas){ __VA_ARGS__ })
+
+/* Compiled shader code; bare_add_shaders() generates one per .glsl file. */
+typedef struct BareShaderCode {
+    const unsigned char *spirv, *dxil, *msl;
+    unsigned spirv_size, dxil_size, msl_size;
+    int samplers;         /* inputs it reads */
+    int uniform_buffers;  /* 0 or 1: whether it takes params */
+} BareShaderCode;
+
+typedef uint32_t BareShader;   /* 0 = none */
+
+BareShader bare_shader(const BareShaderCode *code);   /* code must outlive the shader (generated code is static) */
+void       bare_shader_free(BareShader shader);
+
+typedef enum BareBlend {
+    BARE_BLEND_NONE = 0,  /* default: the shader's output replaces the target's pixels */
+    BARE_BLEND_ADD,       /* added to them */
+    BARE_BLEND_OVER       /* premultiplied alpha over them */
+} BareBlend;
+
+#define BARE_MAX_INPUTS 8
+
+typedef struct BarePass {
+    BareImage target;                   /* a canvas; not one of the inputs */
+    BareShader shader;
+    BareImage inputs[BARE_MAX_INPUTS];  /* bound to the shader's samplers 0, 1, ... */
+    const void *params;                 /* the shader's uniform block (std140), copied; see BARE_PARAMS */
+    int params_size;                    /* bytes, up to 1024 */
+    BareBlend blend;
+} BarePass;
+
+#define bare_pass(...)    bare_pass_(&(BarePass){ __VA_ARGS__ }, __FILE__, __LINE__)
+#define BARE_PARAMS(var)  .params = &(var), .params_size = (int)sizeof(var)
 
 /* ------------------------------------------------------------------------ */
 /* Elements                                                                 */
@@ -278,7 +346,7 @@ typedef struct BareBox {
                                    Not snapped to whole pixels, so slow motion stays smooth */
     BareGlass glass;            /* liquid glass (see BareGlass) */
     BareColor text_color;       /* inherited by text inside; alpha 0 = inherit */
-    BareImage image;            /* (M5) fills the box (BARE_FIT = the image's own size) */
+    BareImage image;            /* drawn over .color, stretched to the box, rounded by .radius */
 
     /* interaction (M3, M6) */
     BareLook hover, press;      /* looks while hovered / pressed */
@@ -366,6 +434,7 @@ void  bare_quit(void);                  /* closes the window, frees everything *
 void  bare_background(BareColor color); /* window clear colour (default: dark grey) */
 void  bare_title(const char *title);
 BareVec2 bare_window_size(void);
+float bare_pixel_scale(void);          /* physical pixels per logical pixel (devicePixelRatio) */
 void  bare_continuous(bool on);         /* redraw every frame even when idle (games, video) */
 void  bare_wake(void);                  /* thread-safe: ask for a frame (e.g. data arrived) */
 
@@ -419,6 +488,8 @@ void        bare_set_clipboard(const char *text);
     for (int v = bare_open_(&(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__); v; v = bare_close_())
 
 BareState bare_box_(const BareBox *box, const char *file, int line);
+BareImage bare_canvas_(const BareCanvas *canvas);
+void      bare_pass_(const BarePass *pass, const char *file, int line);
 int       bare_open_(const BareBox *box, const char *file, int line);   /* returns 1 */
 int       bare_close_(void);                                            /* returns 0 */
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line);

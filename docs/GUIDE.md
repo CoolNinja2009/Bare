@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (M3) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (M3, plus canvases) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -15,9 +15,10 @@ How to build UIs with Bare, for people who know HTML and CSS. Everything here wo
 9. [Clicks, hover and keys](#9-clicks-hover-and-keys)
 10. [Movement](#10-movement)
 11. [Liquid glass](#11-liquid-glass)
-12. [CSS to Bare cheat sheet](#12-css-to-bare-cheat-sheet)
-13. [Debugging](#13-debugging)
-14. [What's next](#14-whats-next)
+12. [Canvases and your own shaders](#12-canvases-and-your-own-shaders)
+13. [CSS to Bare cheat sheet](#13-css-to-bare-cheat-sheet)
+14. [Debugging](#14-debugging)
+15. [What's next](#15-whats-next)
 
 ---
 
@@ -358,11 +359,66 @@ bare_box(.width = 90, .height = 90, .radius = 45, .glass = { .merge = 50 }, .off
 Glass is the most expensive thing Bare draws (each glass group copies the screen), so use it for a few hero elements,
 not for every list row. `examples/glass.c` is the showcase.
 
-## 12. CSS to Bare cheat sheet
+## 12. Canvases and your own shaders
+
+What `<canvas>` and WebGL are to a web page. A **canvas** is an image your shaders draw into; a **pass** runs a
+fragment shader once for every pixel of a canvas. Show a canvas with `.image` like any picture, or feed it into the
+next pass: that's how blurs, generated backgrounds and whole simulations are built.
+
+```c
+#include "bare.h"
+#include "my_shaders.h"                                  /* generated from shaders/*.glsl at build time */
+
+BareImage sky = bare_canvas(.width = 512, .height = 512);
+BareShader clouds = bare_shader(&clouds_shader);
+
+while (bare_frame()) {
+    struct { float time; } p = { (float)bare_time() };   /* the shader's params */
+    bare_pass(.target = sky, .shader = clouds, BARE_PARAMS(p));
+    bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = sky, .radius = 24);
+}
+```
+
+**Writing a shader** (GLSL 450, the fragment half only; Bare supplies the rest):
+
+```glsl
+#version 450
+layout(location = 0) in vec2 v_uv;                        // 0..1 across the canvas, (0, 0) top-left
+layout(location = 0) out vec4 o_color;                    // straight alpha, like every Bare image
+layout(set = 2, binding = 0) uniform sampler2D u_prev;    // .inputs[0], then binding 1 = .inputs[1] ...
+layout(set = 3, binding = 0) uniform Params { float time; };   // .params, std140 layout
+
+void main() { o_color = vec4(v_uv, 0.5 + 0.5 * sin(time), 1.0); }
+```
+
+Compile shaders with one CMake line; the header holds every GPU's format (SPIR-V, DXIL, Metal) and how many inputs
+and params each shader takes. Commit it, and people without the shader tools can still build:
+
+```cmake
+bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h SOURCES shaders/clouds.glsl)
+```
+
+- `.format`: `BARE_RGBA8` (default), or half floats for HDR colour and simulation state: `BARE_RGBA16F`,
+  `BARE_RG16F` (e.g. velocity), `BARE_R16F` (e.g. pressure). `.nearest = true` turns off filtering;
+  `.repeat = true` wraps sampling outside 0..1.
+- `.blend`: `BARE_BLEND_NONE` (default: replace), `BARE_BLEND_ADD`, `BARE_BLEND_OVER`.
+- A pass can't read the canvas it writes. Ping-pong between two canvases instead, swapping them after each pass.
+- Size canvases in pixels: `bare_window_size()` times `bare_pixel_scale()` (`devicePixelRatio`) for a sharp
+  full-window canvas.
+- Passes run on the GPU in the order you call them, before the frame is drawn. Skip them when nothing changes and
+  your app costs nothing, which a page's endless `requestAnimationFrame` loop never does.
+- std140 in C: floats and `vec2`s pack as in C, but a `vec3` / `vec4` starts on a 16-byte boundary: use `float[4]`.
+
+`examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes with a settings panel made of Bare boxes,
+and `bench/` measures it against the same simulation running in Edge.
+
+## 13. CSS to Bare cheat sheet
 
 | CSS / HTML / JS | Bare |
 |---|---|
 | `<div>` | `bare_box(...)`, or `bare_row/column/stack(...) { }` with children |
+| `<canvas>` + WebGL shaders | `bare_canvas(...)`, `bare_pass(...)`, `.image = canvas` |
+| `devicePixelRatio` | `bare_pixel_scale()` |
 | `display: flex; flex-direction: row` | `bare_row() { }` |
 | `flex-direction: column` | `bare_column() { }` |
 | `position: absolute` layers | `bare_stack() { }` + `.offset` |
@@ -397,7 +453,7 @@ not for every list row. `examples/glass.c` is the showcase.
 | `class="card"` | `.style = &card` *(M7)* |
 | `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
 
-## 13. Debugging
+## 14. Debugging
 
 - **Mistakes are logged, not crashes:** unclosed containers and duplicate IDs print a message with the file and line
   to stderr.
@@ -414,9 +470,9 @@ not for every list row. `examples/glass.c` is the showcase.
   (`bare_ctx_create`, `bare_ctx_begin`, `bare_ctx_end`), which returns the list of draw commands. Bare's own tests in
   `tests/` work this way; your app's layout can be tested the same way.
 
-## 14. What's next
+## 15. What's next
 
 Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): animation (M4), text and images
 (M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c` and `buttons.c` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c` and `fluid/` today.

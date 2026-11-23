@@ -48,6 +48,7 @@ src/
     font_stb.c         stb_truetype implementation of the font backend
     image.c            image handles and pending texture uploads (decoding via stb_image)
     emit.c             tree -> BareDrawList
+    gpu.c              images, canvases, shaders and passes: GPU ops queued in call order
     context.c          BareContext, frame begin/end, the current-context pointer
     widgets.c          (M8) button, checkbox, slider, list item: built only from public elements
   bare.c               the simple API: bare_window / bare_frame / bare_run / bare_quit on top of
@@ -57,11 +58,15 @@ src/
     sdl3/renderer_sdl3gpu.c  BareRenderer on the SDL3 GPU API
     sokol/                   (M9) platform_sapp.c, renderer_sgfx.c
 shaders/
-  bare.glsl            the one shader source (vertex + fragment)
+  bare.glsl            boxes, glyphs and images (vertex + fragment)
+  glass.glsl           liquid glass
+  pass.glsl            the vertex half of every canvas pass (one fullscreen triangle)
   generated/           compiled blobs as C headers (SPIR-V, DXIL, MSL), committed
 assets/fonts/          the default font (Inter, Latin subset, OFL), embedded at build time
 tests/                 headless unit tests (no SDL)
-examples/              hello.c, cards.c, ... one feature per example
+examples/              hello.c, cards.c, ... one feature per example; fluid/ has its own shaders
+bench/                 benchmarks against the browser (bench/README.md)
+cmake/                 BareShaders.cmake: bare_add_shaders() for apps' own shaders
 ```
 
 CMake targets: `bare_core` (static library, core only, no dependencies beyond libc/libm) and `bare` (core + `bare.c` +
@@ -77,14 +82,15 @@ bare_frame() #N
  │    3. animate       move every channel toward its target   -> visual values
  │    4. hit list      visual rects + clips in paint order    -> kept for frame N
  │    5. emit          tree + visual values                   -> BareDrawList
- │    6. render        renderer->render(draw list)            (backend)
- │    7. evict         drop nodes not declared in frame N-1
+ │    6. publish       GPU ops queued this frame (canvases)   -> list.ops
+ │    7. render        renderer->render(draw list): ops first (backend)
+ │    8. evict         drop nodes not declared in frame N-1
  └─ begin frame N
-      8. wait/poll     platform->poll_events; block if idle (see §11)
-      9. input         apply events; hit-test the mouse against the frame N-1 hit list;
+      9. wait/poll     platform->poll_events; block if idle (see §11)
+     10. input         apply events; hit-test the mouse against the frame N-1 hit list;
                        update hovered / pressed / clicked / scroll per node
-     10. reset         frame arena; open the root element (window size, column)
-     11. return true   ... the app declares UI; each element reads its BareState now
+     11. reset         frame arena; open the root element (window size, column)
+     12. return true   ... the app declares UI; each element reads its BareState now
 ```
 
 `bare_run(frame_fn, user)` runs exactly the same steps, but the platform calls `frame_fn` (sokol_app, the web). Both
@@ -325,7 +331,8 @@ typedef struct BareTextureUpload {
 } BareTextureUpload;
 
 typedef struct BareDrawList {
-    const BareTextureUpload *uploads; int upload_count;   /* process first */
+    const BareGpuOp         *ops;     int op_count;       /* images, shaders, canvas passes: run first, in order */
+    const BareTextureUpload *uploads; int upload_count;   /* then these (glyph atlas) */
     const BareDrawCmd       *cmds;    int cmd_count;
     int        width, height;          /* framebuffer, physical pixels */
     float      scale;                  /* physical / logical */
@@ -430,6 +437,26 @@ uniform block). The shader:
 - draws the merged shape's shadow outside the glass.
 
 Cost: one full-frame copy + mip chain per glass command. Copying only the covered region is on the roadmap.
+
+### Canvases and passes (`gpu.c`)
+
+Images, canvases, app shaders and passes don't belong to the element tree: the app calls them whenever it likes,
+and their order matters (a simulation is a chain of passes). So `gpu.c` appends each call to a **pending queue** of
+`BareGpuOp`s (create / upload / destroy image, create / destroy shader, pass), copying params and pixels into the
+queue's data buffer. At the end of the frame `bare__gpu_publish` swaps the pending and published queues, turns data
+offsets into pointers and hands the published ops to the renderer as `list.ops`, which runs them in order before
+drawing the frame. Both queues keep their memory, so the steady state allocates nothing; ops made between frames go
+out with the next frame.
+
+- Images and canvases share one id space (`BareImage`); ids are reused through a free list. The core validates every
+  call (live target and shader, inputs not the target, input count against the shader's sampler count, params size)
+  and logs file:line instead of queueing a bad op.
+- A pass draws one triangle covering the target (`shaders/pass.glsl` gives `v_uv`, top-left origin) with the app's
+  fragment shader. The renderer keeps a pipeline per (shader, target format, blend). `BLEND_NONE` passes don't load
+  the old contents (DONT_CARE). They don't cycle the texture either: a ping-pong canvas written dozens of times a
+  frame would get a new copy of its memory for every write (418 MB in the Fluids benchmark before this was removed).
+- App shaders come from `bare_add_shaders()` (`cmake/BareShaders.cmake` + `bare_shader_header.cmake`): glslc, then
+  shadercross for DXIL, MSL and a reflection JSON whose sampler and uniform-buffer counts go into `BareShaderCode`.
 
 **Shader toolchain.** `shaders/bare.glsl` and `shaders/glass.glsl` (GLSL 450) are the sources. For SDL3: `glslc` → SPIR-V (Vulkan) and
 `SDL_shadercross` → DXIL (D3D12) and MSL (Metal). For sokol (M9): a small `bare.shdc.glsl` wrapper `@include`s the

@@ -129,6 +129,7 @@ void bare_title(const char *title) {
 }
 
 BareVec2 bare_window_size(void) { return (BareVec2){ app.width, app.height }; }
+float    bare_pixel_scale(void) { return app.scale > 0 ? app.scale : 1.0f; }
 void bare_continuous(bool on) { app.continuous = on; }
 void bare_wake(void) { if (app.open) app.platform.wake(app.platform.self); }
 double bare_time(void) { return app.time; }
