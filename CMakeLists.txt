@@ -3,15 +3,20 @@ project(Bare VERSION 0.1.0 LANGUAGES C)
 
 set(BARE_BACKEND "SDL3" CACHE STRING "Backend pair: SDL3 (SOKOL comes in M9)")
 set_property(CACHE BARE_BACKEND PROPERTY STRINGS SDL3)
-option(BARE_BUILD_TESTS "Build the headless unit tests" ON)
-option(BARE_BUILD_EXAMPLES "Build the examples" ON)
+# Tests and examples build by default only when Bare is the top-level project,
+# not when an app pulls it in with add_subdirectory or FetchContent.
+option(BARE_BUILD_TESTS "Build the headless unit tests" ${PROJECT_IS_TOP_LEVEL})
+option(BARE_BUILD_EXAMPLES "Build the examples" ${PROJECT_IS_TOP_LEVEL})
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# Put every executable next to the others so examples find nothing missing.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# Put every executable in build/bin (only when Bare is the top-level project:
+# an app including Bare decides where its own files go).
+if(PROJECT_IS_TOP_LEVEL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
 
 if(MSVC)
     set(BARE_WARNINGS /W4)
@@ -27,6 +32,7 @@ endif()
 add_library(bare_core STATIC
     src/core/arena.c
     src/core/id.c
+    src/core/store.c
     src/core/context.c
     src/core/tree.c
     src/core/layout.c
@@ -72,15 +78,15 @@ endif()
 # ---------------------------------------------------------------------------
 find_program(BARE_GLSLC glslc)
 find_program(BARE_SHADERCROSS shadercross
-    HINTS ${CMAKE_SOURCE_DIR}/tools/shadercross/SDL3_shadercross-3.0.0-windows-VC-x64/bin)
+    HINTS ${PROJECT_SOURCE_DIR}/tools/shadercross/SDL3_shadercross-3.0.0-windows-VC-x64/bin)
 if(BARE_GLSLC AND BARE_SHADERCROSS)
     add_custom_target(bare_shaders
         COMMAND ${CMAKE_COMMAND}
             -DGLSLC=${BARE_GLSLC} -DSHADERCROSS=${BARE_SHADERCROSS}
-            -DSRC=${CMAKE_SOURCE_DIR}/shaders
-            -DOUT=${CMAKE_SOURCE_DIR}/shaders/generated
-            -DWORK=${CMAKE_BINARY_DIR}/shaders
-            -P ${CMAKE_SOURCE_DIR}/cmake/compile_shaders.cmake
+            -DSRC=${PROJECT_SOURCE_DIR}/shaders
+            -DOUT=${PROJECT_SOURCE_DIR}/shaders/generated
+            -DWORK=${PROJECT_BINARY_DIR}/shaders
+            -P ${PROJECT_SOURCE_DIR}/cmake/compile_shaders.cmake
         COMMENT "Compiling shaders/*.glsl to SPIR-V, DXIL and MSL"
         VERBATIM)
 endif()

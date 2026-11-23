@@ -1,4 +1,4 @@
-foreach(name hello shapes glass)
+foreach(name hello shapes glass layout)
     add_executable(${name} ${name}.c)
     target_link_libraries(${name} PRIVATE bare)
     target_compile_options(${name} PRIVATE ${BARE_WARNINGS})

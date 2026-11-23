@@ -39,10 +39,53 @@ static void resolve(BareBox *b) {
     if (b->radius < 0) b->radius = 0;
 }
 
+/* Element IDs (ARCHITECTURE §4).
+ *   explicit: the app's .id, made unique (and reported once) if it repeats;
+ *   automatic: parent + call site + how many times that site ran under this
+ *   parent, so an element from another line appearing or vanishing doesn't
+ *   shift it. */
+static BareId make_id(BareContext *ctx, int index, uint64_t parent_id) {
+    BareElem *e = &ctx->elems[index];
+    uint64_t id;
+    if (e->box.id) {
+        id = e->box.id;
+    } else {
+        uint64_t site = bare__hash_u64(parent_id, (uint64_t)(uintptr_t)e->file);
+        site = bare__hash_u64(site, (uint64_t)e->line);
+        int32_t *seen = bare__map_slot(&ctx->sites, site, NULL);
+        int32_t n = seen ? (*seen)++ : 0;
+        id = bare__hash_u64(site, (uint64_t)n);
+    }
+    if (!id) id = 1;
+
+    bool found = false;
+    int32_t *owner = bare__map_slot(&ctx->ids, id, &found);
+    if (found && owner) {
+        const BareElem *first = &ctx->elems[*owner - 1];
+        int node = first->node;
+        if (node >= 0 && !ctx->store.nodes[node].dup_warned) {
+            ctx->store.nodes[node].dup_warned = true;
+            bare__log(ctx, "duplicate element id at %s:%d (first used at %s:%d); give list items BARE_IDI(name, i)",
+                      e->file, e->line, first->file, first->line);
+        }
+        /* Keep going with a derived, unique id so state doesn't get shared. */
+        for (uint64_t salt = 1;; salt++) {
+            uint64_t alt = bare__hash_u64(id, salt);
+            int32_t *slot = bare__map_slot(&ctx->ids, alt ? alt : 1, &found);
+            if (!found) { if (slot) *slot = index + 1; return alt ? alt : 1; }
+        }
+    }
+    if (owner) *owner = index + 1;
+    return id;
+}
+
 void bare__tree_begin(BareContext *ctx) {
     ctx->elem_count = 0;
     ctx->depth = 0;
     ctx->overflow = 0;
+    int expect = BARE__MAX(ctx->elem_cap, 64);
+    bare__map_init(&ctx->sites, &ctx->frame, expect);
+    bare__map_init(&ctx->ids, &ctx->frame, expect);
     /* The root: the whole window, a column with no padding. */
     BareBox root = { .width = ctx->width, .height = ctx->height, .id = bare_id("bare.root") };
     int i = bare__tree_push(ctx, &root, "bare", 0);
@@ -63,6 +106,7 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
     e->file = file;
     e->line = line;
     e->first_child = e->last_child = e->next_sibling = -1;
+    e->node = -1;
     e->parent = ctx->depth ? ctx->stack[ctx->depth - 1] : -1;
 
     e->glass = resolve_glass(&e->box.glass);
@@ -81,16 +125,9 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
         p->last_child = index;
         p->child_count++;
     }
-    /* Automatic IDs: parent + call site + position. M2 replaces the position
-     * with a per-call-site counter so siblings from other sites don't shift it. */
-    if (e->box.id) {
-        e->id = e->box.id;
-    } else {
-        uint64_t h = bare__hash_u64(parent_id, (uint64_t)(uintptr_t)file);
-        h = bare__hash_u64(h, (uint64_t)line);
-        h = bare__hash_u64(h, e->parent >= 0 ? (uint64_t)ctx->elems[e->parent].child_count : 0);
-        e->id = h ? h : 1;
-    }
+    e->id = make_id(ctx, index, parent_id);
+    e->node = bare__store_get(ctx, e->id, NULL);
+    if (e->node >= 0) ctx->store.nodes[e->node].last_frame = ctx->frame_index;
     return index;
 }
 
@@ -119,7 +156,9 @@ static BareContext *need_frame(const char *what, const char *file, int line) {
 static BareState state_of(BareContext *ctx, int index) {
     BareState s;
     memset(&s, 0, sizeof s);
-    (void)ctx; (void)index;   /* interaction arrives in M3 */
+    if (index < 0) return s;
+    int node = ctx->elems[index].node;
+    if (node >= 0) s.rect = ctx->store.nodes[node].rect;   /* last frame's; hover/press arrive in M3 */
     return s;
 }
 

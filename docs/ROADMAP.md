@@ -50,9 +50,12 @@ Done 2026-11-23.
 - Light that responds to the content behind (adaptive tint and highlight), and optional pointer-driven light.
 - Glass inside clips and scroll containers (M6), glass on text (M5).
 
-## [ ] M2: Flexbox layout and draw commands
+## [x] M2: Flexbox layout and draw commands
 
-Keep from M1/M1.5: `BARE_STACK` layers and `.offset` (visual, ignored by layout).
+Done 2026-11-23. Style resolution stayed in `tree.c` (no `style.c` yet); the fake text measurer moves to M5 with
+text, and the clip push/pop pairing test to M6 with clips. Tests: `tests/test_layout.c` (23). Compared with HTML/CSS by
+reasoning about the CSS algorithm, not side by side in a browser. One deliberate difference: pixel and percent sizes
+never shrink.
 
 **Goal:** real layout: rows, columns, padding, gap, grow/shrink, fit/fixed/percent, min/max, align, justify.
 
@@ -170,6 +173,86 @@ keeps dragging outside its rect; list selection.
 and `text.c` compared between backends.
 **Example:** all examples with `bare_run`; `cards.c` in a browser.
 **Done when:** examples look the same on both backends on Windows, and `cards.c` runs in a browser.
+
+## [ ] M10: Web parity (looks and layout the web has that Bare doesn't yet)
+
+Comes from the checklist below. Cheap layout items (align-self, aspect-ratio, absolute) can move earlier if an example
+needs them.
+
+- Layout: `.self` (align-self), `.aspect` (aspect-ratio), `.wrap` (flex-wrap, rows of cards), `.margin`, absolute
+  positioning with insets (`.position = BARE_ABSOLUTE`, `.inset`).
+- Looks: per-corner radii (`.radii`; the draw command already has four), per-side border widths and colours, outline +
+  outline offset, linear / radial / conic gradients (`.gradient`), several shadows and inset shadows, dashed borders.
+- Transforms: `.rotate`, `.origin` (transform-origin); skew and 3D perspective later.
+- Filters: blur, brightness, contrast, saturate, grayscale on an element (`.filter`), blend modes.
+- Text extras (after M5): letter spacing, underline/strike, text shadow, ellipsis on overflow, weight/italic.
+
+---
+
+## Web parity checklist (HTML + CSS + JS → Bare)
+
+Bare replaces the web stack for native UI, so every common thing the web can do needs an answer. Honest status,
+2026-11-23. **done** = works today; **Mx** = scheduled in that milestone; **C** = plain C already does it, no API
+needed; **beyond** = something the web can't do as easily.
+
+| Web | Bare | Status |
+|---|---|---|
+| **Layout** | | |
+| `display: flex`, `flex-direction` | `bare_row`, `bare_column` | done |
+| `padding`, `gap` | `.padding`, `.pad = {t, r, b, l}`, `.gap` | done |
+| `flex: 1` / `flex-grow` / `flex-shrink` | `BARE_GROW` + `.grow`, `.shrink` | done |
+| `width/height` px, %, `fit-content` | `300`, `BARE_PERCENT(50)`, `BARE_FIT` | done |
+| `min-/max-width/height` | `.min_width` ... | done |
+| `align-items`, `justify-content` (all 6) | `.align`, `.justify` | done |
+| `position: absolute`, overlapping layers | `bare_stack` + `.offset` today; insets in M10 | partial |
+| `z-index` | later siblings draw on top; floating layers later | partial |
+| `align-self`, `aspect-ratio`, `flex-wrap`, `margin` | `.self`, `.aspect`, `.wrap`, `.margin` | M10 |
+| `display: grid` | grid layout | later |
+| `overflow: hidden / scroll` | `.clip`, `.scroll` (smooth, nested) | M6 |
+| `display: none`, `order` | don't declare it / declare in that order (immediate mode) | C |
+| `vw`, `vh`, `calc()`, media queries | `bare_window_size()` and arithmetic, `if (win.x < 700)` | C |
+| **Looks** | | |
+| `background-color`, `opacity` | `.color`, `.opacity` (multiplies into children) | done |
+| `border`, `border-radius` | `.border`, `.border_color`, `.radius` | done |
+| `box-shadow` (one, outer) | `.shadow` with blur and spread, Gaussian like CSS | done |
+| `backdrop-filter: blur()` | `.glass = BARE_GLASS_FROSTED` | done |
+| Apple liquid glass (refraction, dispersion, merging) | `.glass`, `.merge` | beyond |
+| per-corner radius, per-side borders, outline | `.radii`, per-side borders, `.outline` | M10 |
+| gradients (linear, radial, conic) | `.gradient` | M10 |
+| several / inset shadows | | M10 |
+| `filter`, `mix-blend-mode` | `.filter`, blend modes | M10 |
+| `clip-path`, `mask`, rounded overflow clip | rounded clipping | later |
+| `<img>`, `object-fit` | `.image`, `bare_image_load`; object-fit in M10 | M5 |
+| **Transforms and animation** | | |
+| `transform: translate()` | `.offset` (sub-pixel smooth, children included) | done |
+| `transform: scale()` | `.scale` | M4 |
+| `rotate()`, `transform-origin` | `.rotate`, `.origin` | M10 |
+| `transition` with `cubic-bezier` | `.animate = BARE_EASE(0.3, BARE_EASE_OUT)` | M4 |
+| spring physics, interruptible without jumps | `BARE_SPRING(response, damping)` | M4, beyond |
+| animate layout changes (FLIP by hand on the web) | `.animate_layout`: moved elements glide | M4, beyond |
+| `@keyframes`, looping animation | any value computed from `bare_time()` | C |
+| enter / exit transitions | | later |
+| **Text** | | |
+| text, wrapping, size, colour, line-height, align | `bare_text("...", .size = 20)` | M5 |
+| `@font-face` | `bare_font_load("x.ttf")` | M5 |
+| letter-spacing, decoration, text-shadow, ellipsis | | M10 |
+| complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
+| `<input>`, `<textarea>`, selection | text input and editing | later (needed for ScreenPlus) |
+| **Interaction (the JS part)** | | |
+| `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks | M3 |
+| `onclick`, `onmouseenter` ... | `if (bare_box(...).clicked)`: the return value | M3 |
+| `cursor`, `pointer-events: none` | `.cursor`, `.passthrough` | M3 |
+| keyboard events | `bare_key_down`, `bare_key_pressed` | M3 |
+| clipboard | `bare_clipboard()`, `bare_set_clipboard()` | done (API) |
+| state, `useState`, re-render | your C variables; every frame redraws from them | C |
+| CSS classes, variables, themes | `.style = &card`, theme styles | M7 |
+| buttons, checkboxes, sliders | `bare_button` ... | M8 |
+| focus, tab order, drag and drop, touch, IME | | later |
+| accessibility (screen readers) | platform a11y trees | later |
+| runs in a browser | sokol backend + Emscripten | M9 |
+| **Cost** | | |
+| idle CPU | 0 (sleeps until input) | beyond |
+| startup, size | milliseconds; one small exe, no runtime | beyond |
 
 ---
 

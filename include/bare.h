@@ -394,10 +394,17 @@ void        bare_set_clipboard(const char *text);
 
 #define BARE__CAT2(a, b) a##b
 #define BARE__CAT(a, b)  BARE__CAT2(a, b)
-#define BARE__CONTAINER(...) \
-    for (int BARE__CAT(bare__open_, __LINE__) = bare_open_(&(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__); \
-         BARE__CAT(bare__open_, __LINE__); \
-         BARE__CAT(bare__open_, __LINE__) = bare_close_())
+/* Each container's loop variable needs its own name, or containers nested on
+ * one line shadow each other (-Wshadow, C4456). __COUNTER__ isn't C11 but
+ * GCC, Clang and MSVC all have it. */
+#ifdef __COUNTER__
+#  define BARE__UNIQUE __COUNTER__
+#else
+#  define BARE__UNIQUE __LINE__
+#endif
+#define BARE__CONTAINER(...) BARE__CONTAINER_(BARE__CAT(bare__open_, BARE__UNIQUE), __VA_ARGS__)
+#define BARE__CONTAINER_(v, ...) \
+    for (int v = bare_open_(&(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__); v; v = bare_close_())
 
 BareState bare_box_(const BareBox *box, const char *file, int line);
 int       bare_open_(const BareBox *box, const char *file, int line);   /* returns 1 */

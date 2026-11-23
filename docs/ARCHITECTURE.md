@@ -35,9 +35,9 @@ src/
   core/                no platform headers, ever
     arena.c            bump allocator: per-frame arena and persistent arena
     id.c               FNV-1a hashing for BARE_ID / BARE_IDI / automatic IDs
-    store.c            retained node table: id -> BareNode (open addressing)
-    tree.c             element tree built while the app declares UI (open/close/leaf)
-    style.c            resolves defaults, .style bases, hover/press looks, inheritance
+    store.c            retained node table: id -> BareNode (open addressing); per-frame maps
+    tree.c             element tree built while the app declares UI (open/close/leaf), IDs,
+                       style resolution (defaults, BARE_ZERO; .style and looks join in M3/M7)
     layout.c           flexbox passes
     easing.c           cubic-bezier evaluation
     spring.c           closed-form damped spring step
@@ -152,7 +152,7 @@ Pre-order matters: every child comes after its parent, so **iterating the array 
 parents** (bottom-up passes) and forwards visits parents first (top-down passes). Layout and emit need no recursion and
 no explicit stack. Strings are copied into the frame arena, so the app's buffers only need to live for the call.
 
-## 5. Styles (resolved in `style.c`)
+## 5. Styles (resolved in `tree.c`; may move to `style.c` when M7 makes it bigger)
 
 For every element, in this order: start from zero → copy non-zero fields of `.style` (M7) → copy non-zero fields of
 the element → apply built-in defaults to fields still at 0 → if hovered, overlay non-zero `.hover` fields; if pressed,
@@ -171,7 +171,13 @@ Flexbox, single-line (no wrap of children, which comes with grid later). `BARE_S
 direction: children share the content box as layers (later ones in front), placed by `.align` on both axes.
 `.offset` is visual and never affects layout. Main axis = `.dir`, cross axis = the other.
 Size values: fixed pixels, `BARE_FIT` (content), `BARE_GROW` (share of free space by `.grow`), `BARE_PERCENT(p)`
-(encoded as a negative float ≤ -2, decoded once in `style.c`). Min/max clamp every result.
+(encoded as a negative float ≤ -2, decoded in `layout.c`). Min/max clamp every result.
+
+`BARE_GROW` behaves like CSS `flex: 1`: basis 0, a share of the free space by `.grow`, never below the element's
+min-content size; a child clamped at its min or max is frozen and the rest is re-split (the CSS algorithm). Shrinking
+applies to content-sized and growing children only. Unlike CSS (where a `width: 200px` flex item still shrinks down to
+its min-content), pixel and percent sizes never shrink: in Bare a number is a promise. Across the main axis, `BARE_GROW` fills the
+parent, and `BARE_STRETCH` makes content-sized children fill it.
 
 Passes (each a straight loop over the pre-order array):
 

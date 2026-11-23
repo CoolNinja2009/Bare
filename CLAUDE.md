@@ -131,23 +131,33 @@ Both compilers must build warning-free; the API header is checked with `-Wall -W
 
 One roadmap milestone per session: write the code, write headless tests, build with both compilers when practical,
 run tests and the milestone's example, fix failures, then update **Current status** below and tick the milestone in
-`docs/ROADMAP.md`.
+`docs/ROADMAP.md`. Keep `docs/GUIDE.md` (the user-facing tutorial) and the web parity checklist in the roadmap true.
+
+**Commits:** author CoolN. Never add a `Co-Authored-By` trailer (the user's rule); the Claude credit lives in
+`README.md` instead. Commit only when the user asks or a milestone is done.
 
 ## Current status
 
-**2026-11-23: M1 and M1.5 (liquid glass) done.** Next: M2 (flexbox layout).
+**2026-11-23: M1, M1.5 (liquid glass) and M2 (flexbox layout) done.** Next: M3 (interaction).
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
-  `examples/hello.c` (the 8-line program), `shapes.c`, `glass.c`. 3 test programs / 30 tests pass on GCC and MSVC,
-  everything builds warning-free on both.
+  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`. 4 test programs / 48 tests pass on
+  GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject (`add_subdirectory`), with
+  tests and examples off by default there.
+- Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
+  min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
+  Retained node store with eviction; automatic IDs from parent + call site + per-site counter; duplicate IDs logged
+  once with both call sites. `BareState.rect` is last frame's drawn rect. `layout.c` example checked by capture.
 - Liquid glass: `.glass` refraction through a curved rim, dispersion, frost, rim light, merging of `.merge` siblings;
   `.offset` (unsnapped) and `bare_stack` added for it. Checked by eye via captures, including 3x zooms of edges.
-- Stand-ins until their milestone: layout is a stub (fixed sizes / content fit, stacking with padding, gap, align;
-  `BARE_GROW`/`BARE_PERCENT` act as fit) until M2; automatic IDs use the sibling index until M2; `BareState` is all
-  zero until M3; text, images, keys are not implemented (bare_text etc. are declared but don't link yet).
+- Stand-ins until their milestone: `BareState` flags are all false until M3; text, images, keys are not implemented
+  (bare_text etc. are declared but don't link yet); the text-measure hook in layout pass 3 arrives with text in M5;
+  clip push/pop pairing is tested when clips exist (M6).
 - Not verified: DPI scale above 100% (this display is 100%; the core's 1.5x/2x maths is unit-tested); live window
-  resizing on Windows (SDL's modal resize loop may pause drawing while dragging: render from an event watch if so).
+  resizing on Windows (SDL's modal resize loop may pause drawing while dragging: render from an event watch if so),
+  so `layout.c`'s reflow was only checked at its starting size.
 - Known cost: each glass command copies the whole frame and builds its mipmaps (see ROADMAP M1.5 to-dos).
 - User decisions: both loop styles (`bare_frame` loop + `bare_run`); dependencies via FetchContent; liquid glass was
-  the first showcase; ScreenPlus (`..\Wallpaper+\ScreenPlus`) is the first real app to port later.
+  the first showcase; ScreenPlus (`..\Wallpaper+\ScreenPlus`) is the first real app to port later; Bare must reach
+  full HTML/CSS/JS parity and beyond (tracked in the roadmap's web parity checklist and M10).

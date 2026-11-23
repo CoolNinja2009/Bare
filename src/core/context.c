@@ -34,6 +34,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     memset(ctx, 0, sizeof *ctx);
     ctx->alloc = alloc;
     bare__arena_init(&ctx->frame, alloc, block);
+    ctx->store.free_head = -1;
     ctx->clear = BARE_RGB(24, 24, 28);
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
@@ -44,6 +45,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     if (!ctx) return;
     if (current == ctx) current = NULL;
     bare__arena_free(&ctx->frame);
+    bare__store_free(ctx);
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
     BareAllocator alloc = ctx->alloc;
@@ -83,6 +85,18 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
     bare__tree_end(ctx);
     bare__layout(ctx);
     bare__emit(ctx);
+
+    /* Remember where everything ended up (BareState.rect next frame), then
+     * forget elements that weren't declared this frame. */
+    for (int i = 0; i < ctx->elem_count; i++) {
+        const BareElem *e = &ctx->elems[i];
+        if (e->node < 0) continue;
+        BareRect r = e->rect;
+        r.x += e->off.x;
+        r.y += e->off.y;
+        ctx->store.nodes[e->node].rect = r;
+    }
+    bare__store_evict(ctx, ctx->frame_index);
     ctx->in_frame = false;
     ctx->frame_index++;
     return &ctx->list;
