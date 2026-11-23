@@ -247,22 +247,34 @@ Colours animate per component in sRGB (as CSS does); OKLab interpolation can com
 
 ## 8. Interaction (`input.c`, `hit.c`)
 
-**Hit list.** After animating, `hit.c` writes one entry per element that can receive the mouse (not `.passthrough`),
-in paint order: `{node, visual rect, clip rect}`, where the clip rect is the intersection of all clipping ancestors. It
-is a persistent buffer reused every frame.
+**Hit list.** At the end of each frame, `hit.c` records every element as drawn (after `.offset` and `.scale`), in
+paint order, with the same indices as that frame's elements: `{id, parent, node, visual rect, radius, clip rect,
+passthrough, scroll}`. The clip rect is the intersection of all clipping (or scrolling) ancestors. It is a persistent
+buffer reused every frame.
 
-**Hit testing.** At the start of a frame, walk the hit list **backwards** (topmost first) and take the first entry whose
-rect and clip both contain the mouse. Rounded corners count: a point outside a corner's radius misses. That element and
-all its ancestors are `hovered` (like CSS `:hover`).
+**Hit testing.** Input events (`bare_ctx_event`) arrive between frames and are tested against that list. Walk it
+**backwards** (topmost first) and take the first entry that isn't `.passthrough` whose rect and clip contain the
+point. Rounded corners count. Passthrough removes only the element itself; its children can still be hit. The result
+is a *chain*: the element and all its ancestors, by ID.
 
-**Press and click.** On mouse down, the hovered element becomes the *active* element and is `pressed` while the
-button is held. On mouse up, it gets `clicked` if the mouse is still over it. One click per press; dragging off and
-back on still clicks, dragging off and releasing doesn't. Right button sets `right_clicked` the same way.
+**Hover.** At the start of a frame (`bare__input_begin`) the chain under the mouse is the hover chain: every element in
+it is `hovered` (like CSS `:hover`). Looks (`.hover`, then `.press` on top) are applied while the element is declared,
+so they show in the same frame.
 
-**Wheel.** Goes to the nearest scroll-container ancestor of the hovered element that can still move in that direction
-(so nested scroll areas hand off at their ends). Its `scroll_target` moves; the scroll channel springs toward it.
+**Press and click.** On button down, the chain under the mouse is remembered; its elements are `pressed` while the
+button is held, wherever the mouse goes. On button up, the elements in both that chain and the chain under the mouse
+now are `clicked` (the DOM rule: the nearest common ancestor of the down and up targets, bubbling up). One click per
+press; dragging off and back on still clicks, dragging off and releasing doesn't. The right button sets
+`right_clicked` the same way. Losing window focus releases all keys and buttons.
 
-**Cursor.** The hovered element's `.cursor` (or its nearest ancestor's) is sent to the platform when it changes.
+**Extra frames.** `bare_ctx_end` asks for another frame after a click or key press (the app may have declared
+elements before reacting to it) and when the element under a still mouse changed (layout moved), so hover is never
+stale while idle.
+
+**Wheel.** Goes to the nearest scroll-container ancestor of what's under the mouse; its node's scroll offset moves (40
+px per notch). M6 adds clamping to the content, hand-off between nested scrollers at their ends, and the spring.
+
+**Cursor.** The innermost hovered element's `.cursor` (`bare_ctx_cursor`), sent to the platform after each frame.
 
 **Z-order.** Paint order is declaration order. Floating layers (popups, tooltips drawn above everything) are deferred,
 and will be a `.layer` field that sorts the hit list and the draw list.

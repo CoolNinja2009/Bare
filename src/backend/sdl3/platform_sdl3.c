@@ -69,6 +69,45 @@ static void window_size(void *self, float *w, float *h, float *scale) {
     *scale = s;
 }
 
+/* SDL keycode (what the key types on the user's layout) -> BareKey; falls
+ * back to the physical key for letters and digits on non-Latin layouts. */
+static int map_key(SDL_Keycode k, SDL_Scancode sc) {
+    if (k >= 'a' && k <= 'z') return BARE_KEY_A + (int)(k - 'a');
+    if (k >= '0' && k <= '9') return BARE_KEY_0 + (int)(k - '0');
+    if (k >= SDLK_F1 && k <= SDLK_F12) return BARE_KEY_F1 + (int)(k - SDLK_F1);
+    switch (k) {
+    case SDLK_ESCAPE: return BARE_KEY_ESCAPE;
+    case SDLK_RETURN: case SDLK_KP_ENTER: return BARE_KEY_ENTER;
+    case SDLK_SPACE: return BARE_KEY_SPACE;
+    case SDLK_TAB: return BARE_KEY_TAB;
+    case SDLK_BACKSPACE: return BARE_KEY_BACKSPACE;
+    case SDLK_DELETE: return BARE_KEY_DELETE;
+    case SDLK_INSERT: return BARE_KEY_INSERT;
+    case SDLK_HOME: return BARE_KEY_HOME;
+    case SDLK_END: return BARE_KEY_END;
+    case SDLK_PAGEUP: return BARE_KEY_PAGE_UP;
+    case SDLK_PAGEDOWN: return BARE_KEY_PAGE_DOWN;
+    case SDLK_LEFT: return BARE_KEY_LEFT;
+    case SDLK_RIGHT: return BARE_KEY_RIGHT;
+    case SDLK_UP: return BARE_KEY_UP;
+    case SDLK_DOWN: return BARE_KEY_DOWN;
+    case SDLK_LSHIFT: case SDLK_RSHIFT: return BARE_KEY_SHIFT;
+    case SDLK_LCTRL: case SDLK_RCTRL: return BARE_KEY_CTRL;
+    case SDLK_LALT: case SDLK_RALT: return BARE_KEY_ALT;
+    case SDLK_LGUI: case SDLK_RGUI: return BARE_KEY_SUPER;
+    case SDLK_MINUS: return BARE_KEY_MINUS;
+    case SDLK_EQUALS: return BARE_KEY_EQUALS;
+    case SDLK_COMMA: return BARE_KEY_COMMA;
+    case SDLK_PERIOD: return BARE_KEY_PERIOD;
+    case SDLK_SLASH: return BARE_KEY_SLASH;
+    default: break;
+    }
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) return BARE_KEY_A + (int)(sc - SDL_SCANCODE_A);
+    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) return BARE_KEY_1 + (int)(sc - SDL_SCANCODE_1);
+    if (sc == SDL_SCANCODE_0) return BARE_KEY_0;
+    return BARE_KEY_NONE;
+}
+
 /* Translates one SDL event; returns false for events Bare doesn't use. */
 static bool translate(const SDL_Event *e, BareEvent *out) {
     memset(out, 0, sizeof *out);
@@ -92,6 +131,9 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         out->kind = BARE_EVENT_FOCUS;
         out->as.focused = e->type == SDL_EVENT_WINDOW_FOCUS_GAINED;
         return true;
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+        out->kind = BARE_EVENT_MOUSE_LEAVE;
+        return true;
     case SDL_EVENT_MOUSE_MOTION:
         out->kind = BARE_EVENT_MOUSE_MOVE;
         out->as.mouse.x = e->motion.x * k;
@@ -107,14 +149,18 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         return true;
     case SDL_EVENT_MOUSE_WHEEL:
         out->kind = BARE_EVENT_WHEEL;
-        out->as.wheel.dx = e->wheel.x;
-        out->as.wheel.dy = e->wheel.y;
+        {
+            float flip = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
+            out->as.wheel.dx = e->wheel.x * flip;
+            out->as.wheel.dy = e->wheel.y * flip;
+        }
         out->as.wheel.precise = false;
         return true;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
         out->kind = BARE_EVENT_KEY;
-        out->as.key.key = (int)e->key.scancode;    /* mapped to BareKey in M3 */
+        out->as.key.key = map_key(e->key.key, e->key.scancode);
+        if (out->as.key.key == BARE_KEY_NONE) return false;
         out->as.key.down = e->key.down;
         out->as.key.repeat = e->key.repeat;
         out->as.key.mods = e->key.mod;

@@ -283,7 +283,7 @@ typedef struct BareBox {
     /* interaction (M3, M6) */
     BareLook hover, press;      /* looks while hovered / pressed */
     BareCursor cursor;
-    bool passthrough;           /* ignore the mouse (CSS pointer-events: none) */
+    bool passthrough;           /* the mouse goes through it (CSS pointer-events: none); children still get it */
     bool clip;                  /* (M6) clip children to the box */
     BareScroll scroll;          /* (M6) scroll overflowing children; implies .clip */
 
@@ -372,18 +372,30 @@ void  bare_wake(void);                  /* thread-safe: ask for a frame (e.g. da
 double bare_time(void);                 /* seconds since bare_window */
 float  bare_dt(void);                   /* seconds since the previous frame */
 
-BareVec2 bare_mouse(void);
+BareVec2 bare_mouse(void);              /* logical pixels, window coordinates */
 
+/* Keys by what they type on the user's keyboard layout (Ctrl+Z is Z on
+ * AZERTY too); left and right modifiers count as one. */
 typedef enum BareKey {
     BARE_KEY_NONE = 0,
     BARE_KEY_ESCAPE, BARE_KEY_ENTER, BARE_KEY_SPACE, BARE_KEY_TAB, BARE_KEY_BACKSPACE,
+    BARE_KEY_DELETE, BARE_KEY_INSERT, BARE_KEY_HOME, BARE_KEY_END, BARE_KEY_PAGE_UP, BARE_KEY_PAGE_DOWN,
     BARE_KEY_LEFT, BARE_KEY_RIGHT, BARE_KEY_UP, BARE_KEY_DOWN,
-    BARE_KEY_A, /* ... letters, digits, F-keys follow in M3 */
+    BARE_KEY_SHIFT, BARE_KEY_CTRL, BARE_KEY_ALT, BARE_KEY_SUPER,   /* SUPER: Windows / Command key */
+    BARE_KEY_A, BARE_KEY_B, BARE_KEY_C, BARE_KEY_D, BARE_KEY_E, BARE_KEY_F, BARE_KEY_G, BARE_KEY_H,
+    BARE_KEY_I, BARE_KEY_J, BARE_KEY_K, BARE_KEY_L, BARE_KEY_M, BARE_KEY_N, BARE_KEY_O, BARE_KEY_P,
+    BARE_KEY_Q, BARE_KEY_R, BARE_KEY_S, BARE_KEY_T, BARE_KEY_U, BARE_KEY_V, BARE_KEY_W, BARE_KEY_X,
+    BARE_KEY_Y, BARE_KEY_Z,
+    BARE_KEY_0, BARE_KEY_1, BARE_KEY_2, BARE_KEY_3, BARE_KEY_4,
+    BARE_KEY_5, BARE_KEY_6, BARE_KEY_7, BARE_KEY_8, BARE_KEY_9,
+    BARE_KEY_F1, BARE_KEY_F2, BARE_KEY_F3, BARE_KEY_F4, BARE_KEY_F5, BARE_KEY_F6,
+    BARE_KEY_F7, BARE_KEY_F8, BARE_KEY_F9, BARE_KEY_F10, BARE_KEY_F11, BARE_KEY_F12,
+    BARE_KEY_MINUS, BARE_KEY_EQUALS, BARE_KEY_COMMA, BARE_KEY_PERIOD, BARE_KEY_SLASH,
     BARE_KEY_COUNT_
 } BareKey;
 
-bool bare_key_down(BareKey key);
-bool bare_key_pressed(BareKey key);     /* went down this frame */
+bool bare_key_down(BareKey key);        /* held now */
+bool bare_key_pressed(BareKey key);     /* went down this frame, or auto-repeated while held (like keydown) */
 
 const char *bare_clipboard(void);       /* valid until the next frame */
 void        bare_set_clipboard(const char *text);

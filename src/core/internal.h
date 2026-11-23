@@ -69,7 +69,8 @@ typedef struct BareNode {
     BareId   id;               /* 0 = free slot */
     int32_t  next_free;
     uint64_t last_frame;       /* frame it was last declared in */
-    BareRect rect;             /* where it was drawn last frame (layout + offset), logical pixels */
+    BareRect rect;             /* where it was drawn last frame (visual: offset and scale), logical pixels */
+    BareVec2 scroll;           /* wheel-driven scroll offset (applied to layout in M6) */
     bool     dup_warned;       /* a duplicate of this explicit ID was reported once */
 } BareNode;
 
@@ -80,6 +81,7 @@ typedef struct BareStore {
 } BareStore;
 
 int  bare__store_get(BareContext *ctx, BareId id, bool *created);   /* node index, -1 on failure */
+int  bare__store_find(const BareContext *ctx, BareId id);            /* node index, -1 if absent */
 void bare__store_evict(BareContext *ctx, uint64_t frame);            /* drop nodes not seen in `frame` */
 int  bare__store_live(const BareContext *ctx);
 void bare__store_free(BareContext *ctx);
@@ -94,7 +96,8 @@ typedef struct BareElem {
     int         line;
     BareBox     box;                /* resolved: defaults applied, BARE_ZERO -> 0 */
     float       opacity;            /* effective (times ancestors) */
-    BareVec2    off;                /* effective visual offset (plus ancestors'), logical pixels */
+    float       vscale;             /* visual transform (offset and scale, with ancestors'): */
+    BareVec2    vt;                 /*   drawn at rect * vscale + vt (layout.c, after the passes) */
     bool        glass;              /* box.glass is on (fields resolved) */
     float       fit[2];             /* preferred (max-content) size per axis, layout passes 1/4 */
     float       minc[2];            /* min-content size per axis: shrinking stops here */
@@ -103,6 +106,26 @@ typedef struct BareElem {
 } BareElem;
 
 #define BARE__MAX_DEPTH 256
+
+/* ---- interaction (hit.c, input.c) ---------------------------------------- */
+
+/* One element as last drawn, for hit testing. Same order and indices as the
+ * elements of the frame it was built from (paint order). */
+typedef struct BareHit {
+    BareId   id;
+    int32_t  parent;
+    int32_t  node;
+    BareRect rect;              /* visual, logical pixels */
+    float    radius;
+    BareRect clip;              /* intersection of clipping ancestors */
+    bool     passthrough;
+    uint8_t  scroll;            /* BareScroll */
+} BareHit;
+
+/* An element and its ancestors (innermost first), by ID. */
+typedef struct BareChain { BareId ids[BARE__MAX_DEPTH + 1]; int count; } BareChain;
+
+enum { BARE__PRESS_LEFT, BARE__PRESS_RIGHT, BARE__PRESS_COUNT };
 
 struct BareContext {
     BareAllocator alloc;
@@ -114,6 +137,17 @@ struct BareContext {
     int           overflow;         /* opens beyond MAX_DEPTH, ignored */
     BareMap       sites;            /* (parent, call site) -> times seen this frame */
     BareMap       ids;              /* id -> element index + 1, this frame */
+
+    BareHit      *hits;    int hit_count, hit_cap;      /* last frame, for this frame's input */
+    BareVec2      mouse;
+    bool          mouse_in;          /* the pointer is over the window */
+    bool          held[BARE__PRESS_COUNT];
+    BareChain     press[BARE__PRESS_COUNT];   /* where each button went down */
+    BareChain     hover;             /* computed at begin */
+    BareChain     clicked[BARE__PRESS_COUNT]; /* since the last frame ended */
+    BareId        hover_top;         /* innermost hovered element this frame (0 = none) */
+    uint8_t       key_down[BARE_KEY_COUNT_], key_pressed[BARE_KEY_COUNT_];
+    BareCursor    cursor;
 
     BareDrawCmd  *cmds;    int cmd_count, cmd_cap;
     BareDrawList  list;
@@ -139,8 +173,19 @@ int  bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int
 void bare__tree_begin(BareContext *ctx);
 void bare__tree_end(BareContext *ctx);
 
-/* layout.c */
+/* layout.c: the flexbox passes, then visual transforms (vscale, vt) */
 void bare__layout(BareContext *ctx);
+
+/* hit.c */
+void bare__hits_build(BareContext *ctx);
+int  bare__hit_find(const BareContext *ctx, BareVec2 p);              /* topmost hit index, -1 */
+void bare__hit_chain(const BareContext *ctx, int index, BareChain *out);
+bool bare__chain_has(const BareChain *c, BareId id);
+BareRect bare__visual_rect(const BareElem *e);
+
+/* input.c */
+void bare__input_begin(BareContext *ctx);       /* hover chain from the mouse */
+bool bare__input_end(BareContext *ctx);         /* clears one-frame input; true = draw another frame */
 
 /* emit.c */
 void bare__emit(BareContext *ctx);

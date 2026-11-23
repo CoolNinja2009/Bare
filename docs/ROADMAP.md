@@ -73,7 +73,13 @@ push/pop pairing).
 **Example:** `examples/layout.c`: a sidebar + header + content grid of cards that reflows on resize.
 **Done when:** all layout tests pass, the example matches the same layout written in HTML/CSS (compare by eye).
 
-## [ ] M3: Basic interaction
+## [x] M3: Basic interaction
+
+Done 2026-11-23. Also pulled forward from M4: `.scale` as a real visual transform (about the centre, children
+included, composed with `.offset`), drawn and hit-tested. Clicks follow the DOM rule (common ancestor of the down and up
+targets, bubbling). An extra frame is drawn after a click or key press, and when the UI moves under a still mouse.
+Checked in the real app by injecting SDL events from a scratch build (not committed) and capturing. Wheel offsets are
+stored per scroll container, clamped only at 0 until M6.
 
 **Goal:** elements know when they are hovered, pressed and clicked; the wheel produces scroll deltas.
 
@@ -225,7 +231,7 @@ needed; **beyond** = something the web can't do as easily.
 | `<img>`, `object-fit` | `.image`, `bare_image_load`; object-fit in M10 | M5 |
 | **Transforms and animation** | | |
 | `transform: translate()` | `.offset` (sub-pixel smooth, children included) | done |
-| `transform: scale()` | `.scale` | M4 |
+| `transform: scale()` | `.scale` (drawn and hit-tested) | done |
 | `rotate()`, `transform-origin` | `.rotate`, `.origin` | M10 |
 | `transition` with `cubic-bezier` | `.animate = BARE_EASE(0.3, BARE_EASE_OUT)` | M4 |
 | spring physics, interruptible without jumps | `BARE_SPRING(response, damping)` | M4, beyond |
@@ -239,10 +245,11 @@ needed; **beyond** = something the web can't do as easily.
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
 | `<input>`, `<textarea>`, selection | text input and editing | later (needed for ScreenPlus) |
 | **Interaction (the JS part)** | | |
-| `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks | M3 |
-| `onclick`, `onmouseenter` ... | `if (bare_box(...).clicked)`: the return value | M3 |
-| `cursor`, `pointer-events: none` | `.cursor`, `.passthrough` | M3 |
-| keyboard events | `bare_key_down`, `bare_key_pressed` | M3 |
+| `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks (instant until M4 animates them) | done |
+| `onclick`, `oncontextmenu`, hover | `if (bare_box(...).clicked)`: the return value; clicks bubble | done |
+| `cursor`, `pointer-events: none` | `.cursor`, `.passthrough` | done |
+| keyboard events | `bare_key_down`, `bare_key_pressed` (layout-aware letters) | done |
+| `dblclick`, mouse buttons 4/5, `mousedown` coordinates for drags | | M8 |
 | clipboard | `bare_clipboard()`, `bare_set_clipboard()` | done (API) |
 | state, `useState`, re-render | your C variables; every frame redraws from them | C |
 | CSS classes, variables, themes | `.style = &card`, theme styles | M7 |

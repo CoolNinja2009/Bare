@@ -17,13 +17,20 @@ static BareDrawCmd *push_cmd(BareContext *ctx) {
     return &ctx->cmds[ctx->cmd_count++];
 }
 
-/* Snaps a logical rect to whole physical pixels (edges, not sizes, so
+/* Snaps the layout rect to whole physical pixels (edges, not sizes, so
  * neighbouring boxes never gap or overlap), then adds the visual offset
- * unsnapped so moving elements glide instead of stepping a pixel at a time. */
-static BareRect place(BareRect r, BareVec2 off, float s) {
+ * unsnapped so moving elements glide instead of stepping a pixel at a time.
+ * Scaled elements are in motion or deliberately off-grid: no snapping. */
+static BareRect place(const BareElem *e, float s) {
+    if (e->vscale != 1.0f) {
+        BareRect v = bare__visual_rect(e);
+        BareRect o = { v.x * s, v.y * s, v.w * s, v.h * s };
+        return o;
+    }
+    BareRect r = e->rect;
     float x0 = roundf(r.x * s), y0 = roundf(r.y * s);
     float x1 = roundf((r.x + r.w) * s), y1 = roundf((r.y + r.h) * s);
-    BareRect o = { x0 + off.x * s, y0 + off.y * s, x1 - x0, y1 - y0 };
+    BareRect o = { x0 + e->vt.x * s, y0 + e->vt.y * s, x1 - x0, y1 - y0 };
     return o;
 }
 
@@ -43,7 +50,7 @@ static void shadow_of(const BareBox *b, float s, float op, float out[4], BareCol
 /* Background, border and (unless the glass draws it) shadow in one command. */
 static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with_shadow) {
     const BareBox *b = &e->box;
-    float s = ctx->scale, op = e->opacity;
+    float s = ctx->scale * e->vscale, op = e->opacity;
     bool fill = b->color.a > 0;
     bool border = b->border > 0 && b->border_color.a > 0;
     bool shadow = with_shadow && b->shadow.color.a > 0;
@@ -69,7 +76,7 @@ static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with
 static void emit_glass(BareContext *ctx, int index, BareRect r, int *last_glass_cmd, int *last_glass_parent) {
     const BareElem *e = &ctx->elems[index];
     const BareGlass *g = &e->box.glass;
-    float s = ctx->scale;
+    float s = ctx->scale * e->vscale;
     BareGlassShape shape = { r, BARE__MIN(e->box.radius * s, BARE__MIN(r.w, r.h) * 0.5f) };
 
     if (g->merge > 0 && *last_glass_cmd == ctx->cmd_count - 1 && *last_glass_parent == e->parent) {
@@ -109,7 +116,7 @@ void bare__emit(BareContext *ctx) {
     for (int i = 0; i < ctx->elem_count; i++) {
         const BareElem *e = &ctx->elems[i];
         if (e->opacity <= 0) continue;
-        BareRect r = place(e->rect, e->off, s);
+        BareRect r = place(e, s);
         if (r.w <= 0 || r.h <= 0) continue;
         if (e->glass) {
             emit_glass(ctx, i, r, &last_glass_cmd, &last_glass_parent);

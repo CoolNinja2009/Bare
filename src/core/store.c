@@ -89,6 +89,16 @@ static bool table_grow(BareContext *ctx) {
     return true;
 }
 
+int bare__store_find(const BareContext *ctx, BareId id) {
+    const BareStore *s = &ctx->store;
+    if (!s->cap) return -1;
+    uint32_t mask = (uint32_t)s->cap - 1;
+    for (uint32_t i = mix(id) & mask; s->keys[i]; i = (i + 1) & mask) {
+        if (s->keys[i] == id) return s->vals[i];
+    }
+    return -1;
+}
+
 int bare__store_get(BareContext *ctx, BareId id, bool *created) {
     BareStore *s = &ctx->store;
     if (created) *created = false;

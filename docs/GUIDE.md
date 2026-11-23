@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (M2) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (M3) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -12,11 +12,12 @@ How to build UIs with Bare, for people who know HTML and CSS. Everything here wo
 6. [Spacing and alignment](#6-spacing-and-alignment)
 7. [Components are functions](#7-components-are-functions)
 8. [Lists and IDs](#8-lists-and-ids)
-9. [Movement](#9-movement)
-10. [Liquid glass](#10-liquid-glass)
-11. [CSS to Bare cheat sheet](#11-css-to-bare-cheat-sheet)
-12. [Debugging](#12-debugging)
-13. [What's next](#13-whats-next)
+9. [Clicks, hover and keys](#9-clicks-hover-and-keys)
+10. [Movement](#10-movement)
+11. [Liquid glass](#11-liquid-glass)
+12. [CSS to Bare cheat sheet](#12-css-to-bare-cheat-sheet)
+13. [Debugging](#13-debugging)
+14. [What's next](#14-whats-next)
 
 ---
 
@@ -245,15 +246,65 @@ bare_box(.id = BARE_ID("save"), ...);                       /* a one-off name */
 
 Using one ID twice in a frame is a mistake; Bare logs it with both file:line locations and keeps going.
 
-Every element call returns a `BareState`. `.rect` is where it was drawn last frame. Hover and click flags are
-*(coming in M3)*:
+## 9. Clicks, hover and keys
+
+Every element call returns a `BareState`: what happened to it. There are no callbacks or event listeners. You ask:
 
 ```c
-BareState s = bare_box(.width = 120, .height = 40);
-if (s.clicked) count++;             /* (coming in M3) */
+if (bare_box(.width = 120, .height = 40, .color = BARE_RGB(70, 110, 245)).clicked) count++;
 ```
 
-## 9. Movement
+| Field | True when |
+|---|---|
+| `.hovered` | the mouse is over it or over one of its children (like `:hover`) |
+| `.pressed` | the left button went down on it and is still held, even if the mouse has moved off (like `:active`) |
+| `.clicked` | the left button went down and came back up over it, this frame only |
+| `.right_clicked` | the same with the right button |
+| `.rect` | where it was drawn last frame (after `.offset` and `.scale`) |
+
+Clicks bubble like in the DOM: clicking the icon inside a button clicks the icon *and* the button, so test the
+button. Dragging off a button and letting go doesn't click; dragging back on first does.
+
+Containers are blocks, not expressions, so inside one ask with `bare_this()`:
+
+```c
+bare_row(.padding = 12, .radius = 10) {
+    if (bare_this().clicked) open = !open;
+    bare_box(.width = 16, .height = 16);
+}
+```
+
+**Looks for hover and press** (`:hover` and `:active`) change any of colour, border colour, shadow, opacity, scale,
+radius, or nudge the offset. They apply in the same frame, with no lag:
+
+```c
+bare_box(.width = 150, .height = 52, .radius = 14, .color = BARE_RGB(70, 110, 245),
+         .cursor = BARE_CURSOR_HAND,
+         .hover = { .color = BARE_RGB(92, 132, 255), .scale = 1.04f, .shadow = BARE_SHADOW_LARGE },
+         .press = { .scale = 0.96f });
+```
+
+A look field left at 0 means "unchanged" (`BARE_ZERO` for a real zero). The press look goes on top of the hover look.
+
+- `.scale` (and the looks' `.scale`) grows or shrinks the element about its centre, children included, without moving
+  anything else, like `transform: scale()`. The mouse hits what's drawn, so a scaled-up button is clickable on its
+  bigger edge.
+- `.cursor`: `BARE_CURSOR_HAND`, `BARE_CURSOR_TEXT`, `BARE_CURSOR_MOVE`, `BARE_CURSOR_RESIZE_EW`, `_NS`,
+  `BARE_CURSOR_NOT_ALLOWED`. The innermost hovered element with a cursor wins.
+- `.passthrough = true` lets the mouse go through an element (`pointer-events: none`), for overlays and decorations.
+  Its children still get the mouse.
+- Rounded corners count: the mouse in the empty corner of a round button misses it.
+
+**Keys:** `bare_key_down(BARE_KEY_SHIFT)` is true while held; `bare_key_pressed(BARE_KEY_S)` is true in the frame it
+goes down (and again on auto-repeat, like `keydown`). Letters follow the user's keyboard layout. A shortcut:
+
+```c
+if (bare_key_down(BARE_KEY_CTRL) && bare_key_pressed(BARE_KEY_S)) save();
+```
+
+`bare_mouse()` is the mouse position. Typing text into fields is later (text input is its own milestone).
+
+## 10. Movement
 
 Real transitions and springs are *(coming in M4)*: you'll set the new value and Bare animates to it:
 
@@ -274,7 +325,7 @@ while (bare_frame()) {
 
 Turn `bare_continuous` off again when nothing moves, so the app goes back to using no CPU.
 
-## 10. Liquid glass
+## 11. Liquid glass
 
 Glass bends and frosts whatever was drawn **before** it (behind it):
 
@@ -307,7 +358,7 @@ bare_box(.width = 90, .height = 90, .radius = 45, .glass = { .merge = 50 }, .off
 Glass is the most expensive thing Bare draws (each glass group copies the screen), so use it for a few hero elements,
 not for every list row. `examples/glass.c` is the showcase.
 
-## 11. CSS to Bare cheat sheet
+## 12. CSS to Bare cheat sheet
 
 | CSS / HTML / JS | Bare |
 |---|---|
@@ -335,15 +386,18 @@ not for every list row. `examples/glass.c` is the showcase.
 | `calc(100vw - 240px)` | `bare_window_size().x - 240` |
 | `key={item.id}` | `.id = BARE_IDI("item", item.id)` |
 | `useState` | a C variable |
-| `onclick` | `if (bare_box(...).clicked)` *(M3)* |
-| `:hover { ... }` | `.hover = { .color = ... }` *(M3)* |
+| `onclick` | `if (bare_box(...).clicked)` |
+| `:hover { ... }`, `:active` | `.hover = { .color = ... }`, `.press = { ... }` |
+| `transform: scale(1.05)` | `.scale = 1.05f` |
+| `cursor: pointer` | `.cursor = BARE_CURSOR_HAND` |
+| `keydown` | `bare_key_pressed(BARE_KEY_ENTER)` |
 | `transition: all .3s ease-out` | `.animate = BARE_EASE(0.3f, BARE_EASE_OUT)` *(M4)* |
 | text | `bare_text("Hello", .size = 20)` *(M5)* |
 | `overflow: auto` | `.scroll = ...` *(M6)* |
 | `class="card"` | `.style = &card` *(M7)* |
 | `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
 
-## 12. Debugging
+## 13. Debugging
 
 - **Mistakes are logged, not crashes:** unclosed containers and duplicate IDs print a message with the file and line
   to stderr.
@@ -360,9 +414,9 @@ not for every list row. `examples/glass.c` is the showcase.
   (`bare_ctx_create`, `bare_ctx_begin`, `bare_ctx_end`), which returns the list of draw commands. Bare's own tests in
   `tests/` work this way; your app's layout can be tested the same way.
 
-## 13. What's next
+## 14. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): interaction (M3), animation (M4), text and images
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): animation (M4), text and images
 (M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c` and `layout.c` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c` and `buttons.c` today.

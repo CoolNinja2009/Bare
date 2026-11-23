@@ -37,6 +37,22 @@ static void resolve(BareBox *b) {
     if (b->opacity > 1) b->opacity = 1;
     if (b->border < 0) b->border = 0;
     if (b->radius < 0) b->radius = 0;
+    if (b->scale < 0) b->scale = 0;
+}
+
+/* A look field replaces the box's when set (BARE_ZERO counts as set). */
+static float look_f(float base, float v) { return (v != 0.0f || signbit(v)) ? v : base; }
+
+static void apply_look(BareBox *b, const BareLook *l) {
+    if (l->color.a) b->color = l->color;
+    if (l->border_color.a) b->border_color = l->border_color;
+    if (l->text_color.a) b->text_color = l->text_color;
+    if (l->shadow.color.a) b->shadow = l->shadow;
+    b->opacity = look_f(b->opacity, l->opacity);
+    b->scale = look_f(b->scale, l->scale);
+    b->radius = look_f(b->radius, l->radius);
+    b->offset.x += l->offset.x;   /* a nudge on top of the element's own offset */
+    b->offset.y += l->offset.y;
 }
 
 /* Element IDs (ARCHITECTURE §4).
@@ -102,24 +118,16 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
     BareElem *e = &ctx->elems[index];
     memset(e, 0, sizeof *e);
     e->box = *box;
-    resolve(&e->box);
     e->file = file;
     e->line = line;
     e->first_child = e->last_child = e->next_sibling = -1;
     e->node = -1;
     e->parent = ctx->depth ? ctx->stack[ctx->depth - 1] : -1;
 
-    e->glass = resolve_glass(&e->box.glass);
-
     uint64_t parent_id = BARE__FNV_OFFSET;
-    e->opacity = e->box.opacity;
-    e->off = e->box.offset;
     if (e->parent >= 0) {
         BareElem *p = &ctx->elems[e->parent];
         parent_id = p->id;
-        e->opacity *= p->opacity;
-        e->off.x += p->off.x;
-        e->off.y += p->off.y;
         if (p->last_child >= 0) ctx->elems[p->last_child].next_sibling = index;
         else p->first_child = index;
         p->last_child = index;
@@ -128,6 +136,17 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
     e->id = make_id(ctx, index, parent_id);
     e->node = bare__store_get(ctx, e->id, NULL);
     if (e->node >= 0) ctx->store.nodes[e->node].last_frame = ctx->frame_index;
+
+    /* Looks apply in the same frame the state is known: hover, then press on top. */
+    bool hovered = bare__chain_has(&ctx->hover, e->id);
+    if (hovered) apply_look(&e->box, &box->hover);
+    if (bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id)) apply_look(&e->box, &box->press);
+    /* The innermost hovered element with a cursor wins; it's declared last. */
+    if (hovered && box->cursor != BARE_CURSOR_DEFAULT) ctx->cursor = box->cursor;
+
+    resolve(&e->box);
+    e->glass = resolve_glass(&e->box.glass);
+    e->opacity = e->box.opacity * (e->parent >= 0 ? ctx->elems[e->parent].opacity : 1.0f);
     return index;
 }
 
@@ -157,8 +176,15 @@ static BareState state_of(BareContext *ctx, int index) {
     BareState s;
     memset(&s, 0, sizeof s);
     if (index < 0) return s;
-    int node = ctx->elems[index].node;
-    if (node >= 0) s.rect = ctx->store.nodes[node].rect;   /* last frame's; hover/press arrive in M3 */
+    const BareElem *e = &ctx->elems[index];
+    s.hovered = bare__chain_has(&ctx->hover, e->id);
+    s.pressed = bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id);
+    s.clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_LEFT], e->id);
+    s.right_clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_RIGHT], e->id);
+    if (e->node >= 0) {
+        s.rect = ctx->store.nodes[e->node].rect;   /* last frame's */
+        s.scroll = ctx->store.nodes[e->node].scroll;
+    }
     return s;
 }
 

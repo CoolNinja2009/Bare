@@ -17,7 +17,6 @@ static struct {
     bool          open, in_frame, quit, shown, continuous, dirty;
     float         width, height, scale;
     double        start, time, prev_time;
-    BareVec2      mouse;
     int           capture_frames;     /* BARE_CAPTURE: frames left before quitting */
     BareEvent     events[MAX_EVENTS];
 } app;
@@ -59,16 +58,16 @@ static void apply(const BareEvent *e) {
         app.scale = e->as.size.scale;
         app.dirty = true;
         break;
-    case BARE_EVENT_MOUSE_MOVE: app.mouse = (BareVec2){ e->as.mouse.x, e->as.mouse.y }; app.dirty = true; break;
-    case BARE_EVENT_MOUSE_BUTTON: app.mouse = (BareVec2){ e->as.button.x, e->as.button.y }; app.dirty = true; break;
     default: app.dirty = true; break;
     }
+    bare_ctx_event(app.ctx, e);   /* mouse, buttons, wheel, keys, focus */
 }
 
 static void end_frame(void) {
     bool animating = false;
     const BareDrawList *list = bare_ctx_end(app.ctx, &animating);
     app.renderer.render(app.renderer.self, list);
+    app.platform.set_cursor(app.platform.self, bare_ctx_cursor(app.ctx));   /* no-op when unchanged */
     if (!app.shown) {
         app.platform.show_window(app.platform.self);   /* no blank flash before the first frame */
         app.shown = true;
@@ -134,7 +133,6 @@ void bare_continuous(bool on) { app.continuous = on; }
 void bare_wake(void) { if (app.open) app.platform.wake(app.platform.self); }
 double bare_time(void) { return app.time; }
 float bare_dt(void) { return (float)(app.time - app.prev_time); }
-BareVec2 bare_mouse(void) { return app.mouse; }
 
 const char *bare_clipboard(void) { return app.open ? app.platform.clipboard_get(app.platform.self) : ""; }
 void bare_set_clipboard(const char *text) { if (app.open) app.platform.clipboard_set(app.platform.self, text); }

@@ -48,6 +48,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     bare__store_free(ctx);
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
+    bare__free(&ctx->alloc, ctx->hits, (size_t)ctx->hit_cap * sizeof *ctx->hits);
     BareAllocator alloc = ctx->alloc;
     bare__free(&alloc, ctx, sizeof *ctx);
 }
@@ -73,6 +74,7 @@ void bare_ctx_begin(BareContext *ctx, float width, float height, float scale, do
     ctx->scale = scale > 0 ? scale : 1.0f;
     ctx->time = time;
     ctx->in_frame = true;
+    bare__input_begin(ctx);   /* before any element asks whether it's hovered */
     bare__tree_begin(ctx);
 }
 
@@ -86,16 +88,15 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
     bare__layout(ctx);
     bare__emit(ctx);
 
-    /* Remember where everything ended up (BareState.rect next frame), then
-     * forget elements that weren't declared this frame. */
+    /* Remember where everything was drawn: BareState.rect and the input that
+     * arrives before the next frame both use it. Then forget elements that
+     * weren't declared this frame. */
+    bare__hits_build(ctx);
     for (int i = 0; i < ctx->elem_count; i++) {
         const BareElem *e = &ctx->elems[i];
-        if (e->node < 0) continue;
-        BareRect r = e->rect;
-        r.x += e->off.x;
-        r.y += e->off.y;
-        ctx->store.nodes[e->node].rect = r;
+        if (e->node >= 0) ctx->store.nodes[e->node].rect = bare__visual_rect(e);
     }
+    if (bare__input_end(ctx) && still_animating) *still_animating = true;
     bare__store_evict(ctx, ctx->frame_index);
     ctx->in_frame = false;
     ctx->frame_index++;

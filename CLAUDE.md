@@ -5,7 +5,7 @@ layout, rich styling, smooth animation, interaction) with none of the browser's 
 startup, GPU rendering. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 Public API: [include/bare.h](include/bare.h).
 
-> The parent folder's `CLAUDE.md` (Orbital Laser, a Minecraft mod) is a different project. Ignore it here.
+
 
 ## Simplicity is the #1 rule
 
@@ -138,12 +138,12 @@ run tests and the milestone's example, fix failures, then update **Current statu
 
 ## Current status
 
-**2026-11-23: M1, M1.5 (liquid glass) and M2 (flexbox layout) done.** Next: M3 (interaction).
+**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout) and M3 (interaction) done.** Next: M4 (animation).
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
-  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`. 4 test programs / 48 tests pass on
-  GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject (`add_subdirectory`), with
+  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`. 5 test programs / 67
+  tests pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject (`add_subdirectory`), with
   tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -151,7 +151,12 @@ run tests and the milestone's example, fix failures, then update **Current statu
   once with both call sites. `BareState.rect` is last frame's drawn rect. `layout.c` example checked by capture.
 - Liquid glass: `.glass` refraction through a curved rim, dispersion, frost, rim light, merging of `.merge` siblings;
   `.offset` (unsnapped) and `bare_stack` added for it. Checked by eye via captures, including 3x zooms of edges.
-- Stand-ins until their milestone: `BareState` flags are all false until M3; text, images, keys are not implemented
+- Interaction (M3): hit list from the last drawn frame, hover/press/click/right-click chains (DOM bubbling), `.hover` /
+  `.press` looks applied the same frame, `.cursor`, `.passthrough`, rounded-corner and clip-aware hits, keys
+  (layout-aware), focus loss releases everything, wheel offsets stored per scroll container. `.scale` works now
+  (visual transform about the centre, composed with `.offset`, drawn and hit-tested). Verified in the real app by
+  injecting SDL events from a scratch build and capturing.
+- Stand-ins until their milestone: looks switch instantly until M4 animates them; text, images, keys are not implemented
   (bare_text etc. are declared but don't link yet); the text-measure hook in layout pass 3 arrives with text in M5;
   clip push/pop pairing is tested when clips exist (M6).
 - Not verified: DPI scale above 100% (this display is 100%; the core's 1.5x/2x maths is unit-tested); live window

@@ -1,4 +1,4 @@
-foreach(name arena id emit layout)
+foreach(name arena id emit layout input)
     add_executable(test_${name} test_${name}.c)
     target_link_libraries(test_${name} PRIVATE bare_core)
     target_include_directories(test_${name} PRIVATE ${PROJECT_SOURCE_DIR}/src/core)

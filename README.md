@@ -42,5 +42,4 @@ ctest --test-dir build
 
 ## Credits
 
-Bare is created by CoolN. The code, shaders and documentation are written with
-[Claude](https://www.anthropic.com/claude) (Anthropic's AI model), working from CoolN's design decisions and direction.
+Bare is created by CoolN and [Claude](https://www.anthropic.com/news/introducing-claude)

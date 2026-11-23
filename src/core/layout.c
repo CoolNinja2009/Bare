@@ -254,6 +254,28 @@ static void position_pass(BareContext *ctx) {
     }
 }
 
+/* ---- visual transforms, top-down ----------------------------------------- */
+
+/* .offset and .scale are like CSS `transform: translate(o) scale(k)` with the
+ * origin at the box's centre: they move what's drawn (children included) and
+ * never the layout. Each element ends up drawn at rect * vscale + vt:
+ *   own:   p -> c + o + k (p - c)
+ *   total: parent's transform after its own. */
+static void transform_pass(BareContext *ctx) {
+    BareElem *el = ctx->elems;
+    for (int i = 0; i < ctx->elem_count; i++) {
+        BareElem *e = &el[i];
+        float pa = 1.0f;
+        BareVec2 pt = { 0, 0 };
+        if (e->parent >= 0) { pa = el[e->parent].vscale; pt = el[e->parent].vt; }
+        float k = e->box.scale;
+        float cx = e->rect.x + e->rect.w * 0.5f, cy = e->rect.y + e->rect.h * 0.5f;
+        e->vscale = pa * k;
+        e->vt.x = pa * (cx + e->box.offset.x - k * cx) + pt.x;
+        e->vt.y = pa * (cy + e->box.offset.y - k * cy) + pt.y;
+    }
+}
+
 void bare__layout(BareContext *ctx) {
     if (ctx->elem_count == 0) return;
     BareElem *root = &ctx->elems[0];
@@ -264,4 +286,5 @@ void bare__layout(BareContext *ctx) {
     fit_pass(ctx, 1);
     resolve_pass(ctx, 1);
     position_pass(ctx);
+    transform_pass(ctx);
 }

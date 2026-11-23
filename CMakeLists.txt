@@ -37,6 +37,8 @@ add_library(bare_core STATIC
     src/core/tree.c
     src/core/layout.c
     src/core/emit.c
+    src/core/hit.c
+    src/core/input.c
 )
 target_include_directories(bare_core PUBLIC include PRIVATE src/core)
 target_compile_options(bare_core PRIVATE ${BARE_STRICT})

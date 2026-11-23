@@ -11,30 +11,7 @@
 extern "C" {
 #endif
 
-typedef enum BareEventKind {
-    BARE_EVENT_NONE = 0,
-    BARE_EVENT_MOUSE_MOVE,
-    BARE_EVENT_MOUSE_BUTTON,
-    BARE_EVENT_WHEEL,
-    BARE_EVENT_KEY,
-    BARE_EVENT_RESIZE,         /* size or DPI scale changed */
-    BARE_EVENT_EXPOSE,         /* the window needs redrawing */
-    BARE_EVENT_FOCUS,
-    BARE_EVENT_QUIT
-} BareEventKind;
-
-typedef struct BareEvent {
-    BareEventKind kind;
-    double time;
-    union {
-        struct { float x, y; } mouse;                       /* logical pixels */
-        struct { int button; bool down; float x, y; } button;
-        struct { float dx, dy; bool precise; } wheel;       /* precise = touchpad pixels, else lines */
-        struct { int key; bool down, repeat; int mods; } key;
-        struct { float w, h, scale; } size;
-        bool focused;
-    } as;
-} BareEvent;
+/* BareEvent lives in bare_core.h: the core consumes it (bare_ctx_event). */
 
 typedef enum BareNativeKind {
     BARE_NATIVE_SDL_WINDOW = 1
