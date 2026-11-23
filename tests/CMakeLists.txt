@@ -1,0 +1,7 @@
+foreach(name arena id emit)
+    add_executable(test_${name} test_${name}.c)
+    target_link_libraries(test_${name} PRIVATE bare_core)
+    target_include_directories(test_${name} PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+    target_compile_options(test_${name} PRIVATE ${BARE_WARNINGS})
+    add_test(NAME ${name} COMMAND test_${name})
+endforeach()
