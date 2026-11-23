@@ -31,7 +31,7 @@ typedef struct Batch {
 /* Uniforms for one glass draw; layouts match shaders/glass.glsl (std140). */
 typedef struct GlassVert { float viewport[4], bounds[4]; } GlassVert;
 typedef struct GlassFrag {
-    float shapes[8][4], radii[8], p0[4], p1[4], tint[4], shadow[4], shadow_color[4], target[4];
+    float shapes[8][4], radii[8], p0[4], p1[4], tint[4], shadow[4], shadow_color[4], target[4], p2[4];
 } GlassFrag;
 typedef struct GlassDraw { GlassVert vert; GlassFrag frag; } GlassDraw;
 
@@ -386,6 +386,7 @@ static void add_glass(const BareGlassCmd *g, const SDL_Rect *scissor, const Bare
     set4(d->frag.shadow, g->shadow[0], g->shadow[1], g->shadow[2], g->shadow[3]);
     color4(d->frag.shadow_color, g->shadow_color);
     set4(d->frag.target, (float)list->width, (float)list->height, 0, 0);
+    set4(d->frag.p2, g->amount, g->zoom > 0 ? g->zoom : 1.0f, g->light, 0);
 
     Batch *b = &gpu.batches[gpu.batch_count++];
     b->first = b->count = 0;

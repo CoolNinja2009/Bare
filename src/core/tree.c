@@ -14,7 +14,7 @@ static float def(float v, float fallback) {
 /* Glass is on when any field is set; the rest then take their defaults. */
 static bool resolve_glass(BareGlass *g) {
     bool on = g->refraction != 0 || g->depth != 0 || g->blur != 0 || g->dispersion != 0 ||
-              g->shine != 0 || g->merge != 0 || g->tint.a != 0;
+              g->shine != 0 || g->merge != 0 || g->zoom != 0 || g->light != 0 || g->tint.a != 0;
     if (!on) return false;
     g->refraction = def(g->refraction, 1.0f);
     g->depth = def(g->depth, 20.0f);
@@ -22,6 +22,7 @@ static bool resolve_glass(BareGlass *g) {
     g->dispersion = def(g->dispersion, 1.0f);
     g->shine = def(g->shine, 1.0f);
     g->merge = BARE__MAX(g->merge, 0.0f);
+    g->zoom = g->zoom > 0 ? g->zoom : 1.0f;
     return true;
 }
 
@@ -146,6 +147,7 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
 
     resolve(&e->box);
     e->glass = resolve_glass(&e->box.glass);
+    e->glass_amount = e->glass ? 1.0f : 0.0f;   /* animation may fade it (anim.c) */
     e->opacity = e->box.opacity * (e->parent >= 0 ? ctx->elems[e->parent].opacity : 1.0f);
     return index;
 }

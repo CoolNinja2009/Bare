@@ -174,7 +174,11 @@ typedef struct BareLook {
  * light-catching rim. Any non-zero field turns it on; other fields at 0 take
  * their defaults. `.glass = BARE_GLASS` is the usual start. The box's .color
  * and .border are drawn on top of the glass (a light .color frosts it), its
- * .shadow under it. */
+ * .shadow under it.
+ *
+ * With .animate, glass settings animate like everything else, and turning
+ * glass on or off is animated too: it condenses out of the backdrop and
+ * dissolves back into it (a solid knob can turn to glass while pressed). */
 typedef struct BareGlass {
     float refraction;     /* how strongly the rim bends the backdrop (default 1) */
     float depth;          /* width of the curved rim in pixels (default 20) */
@@ -182,6 +186,8 @@ typedef struct BareGlass {
     float dispersion;     /* colour fringing at the rim (default 1; BARE_ZERO = none) */
     float shine;          /* rim highlight (default 1; BARE_ZERO = none) */
     float merge;          /* melt into neighbouring glass siblings within this many pixels (default 0) */
+    float zoom;           /* magnifies what's behind, like a loupe (default 1) */
+    float light;          /* turns the light catching the rim, degrees clockwise from the top left (default 0) */
     BareColor tint;       /* alpha = strength */
 } BareGlass;
 

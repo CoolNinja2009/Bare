@@ -118,6 +118,9 @@ static void emit_glass(BareContext *ctx, int index, BareRect r, int *last_glass_
     gc->dispersion = g->dispersion;
     gc->shine = g->shine;
     gc->merge = g->merge * s;
+    gc->zoom = g->zoom > 0 ? g->zoom : 1.0f;
+    gc->light = g->light * 0.017453293f;
+    gc->amount = e->glass_amount;
     gc->tint = color_f(g->tint, 1.0f);
     gc->opacity = e->opacity;
     shadow_of(&e->box, s, 1.0f, gc->shadow, &gc->shadow_color);

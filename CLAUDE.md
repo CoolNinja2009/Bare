@@ -146,7 +146,8 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
-  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `fluid/`. 7
+  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `glass_motion/`,
+  `fluid/`. 7
   test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
@@ -166,6 +167,13 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
   Channel sets (30 floats each) come from a pool only for elements that animate (`src/core/anim.c`). `cards.c`
   (springy shuffle button, cards gliding between columns, widen switch) checked by mid-flight captures from a scratch
   build; idle CPU is 0 after settling.
+- Glass in motion (after M4): glass settings are animation channels (amount, refraction, depth, blur, dispersion,
+  shine, zoom, light, tint); turning glass on/off condenses/dissolves it; new `BareGlass.zoom` (loupe magnification)
+  and `.light` (rim light angle) in `shaders/glass.glsl` (blobs regenerated). `examples/glass_motion/` (own shaders:
+  dunes, petals, colour wheel, icons) loops five glass moments timed against a reference video the user gave (sampled
+  frame by frame in the browser): lens condense/dissolve, capsule light sweep, loupe lift + magnify + glide, loupe →
+  red capsule morph with a checkerboard opening behind, switch knob turning to glass while held. Gaps: no text (M5),
+  no rotation (the reference's tilted entrance), backdrops are look-alikes, not the reference's footage.
 - Canvas: `bare_canvas` (RGBA8 / RGBA16F / RG16F / R16F, nearest, repeat), `bare_shader`, `bare_pass` (up to 8
   inputs, std140 params, blend none/add/over), `bare_add_shaders()` in CMake, `.image` boxes, `bare_image_size`,
   `bare_image_from_pixels`, `bare_pixel_scale()`. GPU ops are queued in `src/core/gpu.c` and run by the renderer

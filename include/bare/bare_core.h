@@ -80,6 +80,9 @@ typedef struct BareGlassCmd {
     const BareGlassShape *shapes;
     int        count;
     float      refraction, depth, blur, dispersion, shine, merge;   /* pixels where relevant */
+    float      zoom;               /* magnification of the backdrop about each shape's centre */
+    float      light;              /* rim light direction, radians clockwise from the top left */
+    float      amount;             /* 0..1: how much glass there is (fading in or out); shadow excluded */
     BareColorF tint;
     float      shadow[4];          /* offset x, offset y, blur, spread */
     BareColorF shadow_color;

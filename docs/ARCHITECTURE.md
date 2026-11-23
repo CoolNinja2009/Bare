@@ -215,9 +215,10 @@ which never animate, cost nothing):
 |---|---|---|
 | layout | x, y (relative to the parent), width, height | `.animate_layout`, else `.animate` |
 | look | background rgba, border rgba, text rgba, shadow rgba (0..255), border width, radius, opacity, scale, offset x/y, shadow x/y/blur/spread | `.animate` |
+| glass | amount (1 = glass, 0 = none), refraction, depth, blur, dispersion, shine, zoom, light, tint rgba | `.animate` |
 | scroll | scroll x/y | built-in smooth spring (M6) |
 
-Glass parameters don't animate yet. Positions animate relative to the parent: the target is the element's layout
+`merge` doesn't animate. Positions animate relative to the parent: the target is the element's layout
 position minus its parent's, and the drawn position is the parent's *drawn* position plus the channel. So when a parent
 moves, its children move with it rigidly instead of each lagging on its own, and elements that don't animate at all are
 still carried by an animating parent. Scale and offset are visual-only transforms (like CSS `transform`): they never
@@ -264,6 +265,10 @@ are the targets; the element's rect and looks are overwritten with the animated 
 - **Transparent ends**: fading a colour to alpha 0 animates only its alpha, and fading in from alpha 0 starts from the
   new colour (CSS interpolates premultiplied colours, which has the same effect): red fading out stays red. A shadow's
   colour governs its geometry the same way, so a shadow fades in place.
+- **Glass coming and going**: turning glass off fades its *amount* (the shader draws `glass * amount`, the shadow
+  separately) while refraction, frost, fringes, zoom and tint fade with it and the rim's depth, shine and light stay put,
+  so it dissolves into the backdrop; it's drawn until the amount reaches 0. Turning it on from nothing starts with the new
+  shape and light and no bending, so it condenses.
 - **Moving to another parent** (same explicit id): the channel is re-expressed relative to the new parent from the
   last drawn position, so the element glides from where it was.
 - **Snapping**: an element whose position or size is animating (or an ancestor's) is drawn unsnapped, like scaled ones,

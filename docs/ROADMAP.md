@@ -46,7 +46,9 @@ Done 2026-11-23.
 **Still to do to make it best in class** (fold into later milestones):
 - Copy only the region behind each glass group (and share one copy between non-overlapping groups) instead of the
   whole frame; measure at 4K with many panels.
-- Springs from M4 for the motion; glass that wobbles/stretches with velocity (liquid feel).
+- ~~Springs from M4 for the motion~~ done after M4: glass settings animate, glass condenses and dissolves, `.zoom`
+  (loupe) and `.light` (rim light direction); `examples/glass_motion/`. Still to do: glass that wobbles/stretches with
+  velocity (liquid feel), rotation (M10) for tilted entrances.
 - Light that responds to the content behind (adaptive tint and highlight), and optional pointer-driven light.
 - Glass inside clips and scroll containers (M6), glass on text (M5).
 

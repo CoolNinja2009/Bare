@@ -10,7 +10,9 @@
 // further in, and the flat middle stays clear. Red, green and blue bend by
 // slightly different amounts (dispersion). A light from the top left catches
 // the tilted rim (shine). Shapes melt together with a smooth minimum of their
-// distance fields (merge).
+// distance fields (merge). Zoom magnifies the backdrop about the centre of the
+// nearest shape, like a loupe; amount fades the glass (not its shadow) so it
+// can condense out of the backdrop and dissolve back into it.
 //
 // Units: physical pixels, y down. SDL3 GPU SPIR-V bindings: vertex uniforms
 // set 1, fragment samplers set 2, fragment uniforms set 3.
@@ -49,6 +51,7 @@ layout(set = 3, binding = 0) uniform Glass {
     vec4 u_shadow;         // offset x, offset y, blur, spread
     vec4 u_shadow_color;   // straight alpha
     vec4 u_target;         // backdrop width, height
+    vec4 u_p2;             // amount, zoom, light angle (radians clockwise), 0
 };
 
 float sd_round_box(vec2 p, vec2 h, float r) {
@@ -77,6 +80,22 @@ float field(vec2 p, float grow) {
     return d;
 }
 
+// Centre of the shape nearest to p (the loupe magnifies about it).
+vec2 nearest_centre(vec2 p) {
+    int count = int(u_p0.x + 0.5);
+    float best = 1e6;
+    vec2 c = p;
+    for (int i = 0; i < 8; i++) {
+        if (i >= count) break;
+        vec4 s = u_shapes[i];
+        vec2 h = s.zw * 0.5;
+        float r = min(u_radii[i / 4][i % 4], min(h.x, h.y));
+        float d = sd_round_box(p - (s.xy + h), h, r);
+        if (d < best) { best = d; c = s.xy + h; }
+    }
+    return c;
+}
+
 float erf_approx(float x) {
     float s = sign(x), a = abs(x);
     float t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
@@ -100,6 +119,7 @@ void main() {
     vec2 p = v_pos;
     float merge = u_p0.y, depth = max(u_p0.z, 1.0), refraction = u_p0.w;
     float blur = u_p1.x, dispersion = u_p1.y, shine = u_p1.z, opacity = u_p1.w;
+    float amount = u_p2.x, zoom = max(u_p2.y, 0.01), angle = u_p2.z;
 
     // Shadow from the merged shape, not drawn under the glass itself.
     vec4 shadow = vec4(0.0);
@@ -132,12 +152,15 @@ void main() {
     float drop = 1.0 - sqrt(max(1.0 - x * x, 0.0));
     float bend = refraction * depth * 0.55 * drop;
 
-    // Pull the backdrop inward along the normal; each colour by its own amount.
+    // Magnify about the shape's centre, then pull the backdrop inward along
+    // the normal; each colour by its own amount.
+    vec2 c = nearest_centre(p);
+    vec2 q = c + (p - c) / zoom;
     float spread = 0.06 * dispersion * x;
     vec3 col;
-    col.r = backdrop(p - n * bend * (1.0 + spread), blur).r;
-    col.g = backdrop(p - n * bend, blur).g;
-    col.b = backdrop(p - n * bend * (1.0 - spread), blur).b;
+    col.r = backdrop(q - n * bend * (1.0 + spread), blur).r;
+    col.g = backdrop(q - n * bend, blur).g;
+    col.b = backdrop(q - n * bend * (1.0 - spread), blur).b;
 
     // Glass lifts colour slightly and brightens a touch.
     float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
@@ -145,7 +168,9 @@ void main() {
     col = mix(col, u_tint.rgb, u_tint.a);
 
     // Light from the top left catches the tilted rim; a weaker bounce on the far side.
+    float ca = cos(angle), sa = sin(angle);
     vec2 light = normalize(vec2(-0.55, -0.85));
+    light = vec2(light.x * ca - light.y * sa, light.x * sa + light.y * ca);   // clockwise on screen (y down)
     float rim = pow(x, 3.0);
     float facing = max(dot(n, light), 0.0), away = max(dot(n, -light), 0.0);
     float spec = rim * (0.55 * pow(facing, 1.5) + 0.22 * pow(away, 2.0));
@@ -157,8 +182,8 @@ void main() {
     // glass there), which gives the slab thickness without a second outline.
     col *= 1.0 - 0.09 * min(refraction, 1.5) * x * x * x;
 
-    vec4 glass = vec4(clamp(col, 0.0, 1.0) * cover, cover);
-    o_color = (glass + shadow * (1.0 - cover)) * opacity;
+    vec4 glass = vec4(clamp(col, 0.0, 1.0) * cover, cover) * amount;
+    o_color = (glass + shadow * (1.0 - glass.a)) * opacity;
 }
 
 #endif

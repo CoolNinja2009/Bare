@@ -13,3 +13,11 @@ bare_add_shaders(fluid OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/fluid/generated/fluid_
     fluid/shaders/pressure.glsl fluid/shaders/gradient.glsl fluid/shaders/advect.glsl fluid/shaders/splat.glsl
     fluid/shaders/bloom_prefilter.glsl fluid/shaders/bloom_blur.glsl fluid/shaders/sunrays_mask.glsl
     fluid/shaders/sunrays.glsl fluid/shaders/blur.glsl fluid/shaders/display.glsl)
+
+# Liquid glass in motion: glass controls animated with springs and eases.
+add_executable(glass_motion glass_motion/glass_motion.c)
+target_link_libraries(glass_motion PRIVATE bare)
+target_compile_options(glass_motion PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(glass_motion OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/glass_motion/generated/glass_motion_shaders.h SOURCES
+    glass_motion/shaders/dunes.glsl glass_motion/shaders/petals.glsl glass_motion/shaders/wheel.glsl
+    glass_motion/shaders/icons.glsl)

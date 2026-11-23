@@ -381,6 +381,67 @@ TEST(channel_sets_are_reused) {
     reset();
 }
 
+/* A knob that turns to glass while `on`. */
+static const BareDrawList *knob(bool on) {
+    begin();
+    bare_box(.id = BARE_ID("knob"), .width = 40, .height = 40, .radius = 20, .animate = BARE_EASE(0.5f, BARE_LINEAR),
+             .color = on ? BARE_RGBA(255, 255, 255, 0) : BARE_WHITE,
+             .glass = on ? (BareGlass){ .refraction = 1.0f, .zoom = 1.5f, .light = 90 } : (BareGlass){ 0 });
+    return end();
+}
+
+static const BareGlassCmd *glass_cmd(const BareDrawList *l) {
+    for (int i = 0; i < l->cmd_count; i++)
+        if (l->cmds[i].kind == BARE_CMD_GLASS) return &l->cmds[i].as.glass;
+    return NULL;
+}
+
+TEST(glass_condenses_and_dissolves) {
+    CHECK(glass_cmd(knob(false)) == NULL);
+    const BareGlassCmd *g = NULL;
+    for (int i = 0; i < 15; i++) g = glass_cmd(knob(true));   /* half way */
+    CHECK(g != NULL);
+    CHECK_NEAR(g->amount, 0.5, 0.01);
+    CHECK_NEAR(g->refraction, 0.5, 0.01);   /* bending grows in */
+    CHECK_NEAR(g->zoom, 1.25, 0.01);
+    CHECK_NEAR(g->depth, 20, 1e-4);          /* shape and light are there from the start */
+    CHECK_NEAR(g->light, 90 * 0.017453293, 1e-4);
+    for (int i = 0; i < 20; i++) g = glass_cmd(knob(true));
+    CHECK_NEAR(g->amount, 1, 0);
+    CHECK_NEAR(g->zoom, 1.5, 0);
+
+    for (int i = 0; i < 15; i++) g = glass_cmd(knob(false));   /* dissolving: still drawn */
+    CHECK(g != NULL);
+    CHECK_NEAR(g->amount, 0.5, 0.01);
+    CHECK_NEAR(g->depth, 20, 1e-4);          /* keeps its shape while it fades */
+    for (int i = 0; i < 20; i++) g = glass_cmd(knob(false));
+    CHECK(g == NULL);                        /* gone */
+    CHECK(!animating);
+    reset();
+}
+
+TEST(glass_settings_animate) {
+    for (int f = 0; f < 16; f++) {
+        begin();
+        bare_box(.id = BARE_ID("lens"), .width = 80, .height = 80, .radius = 40, .animate = BARE_EASE(0.5f, BARE_LINEAR),
+                 .glass = { .zoom = f ? 2.0f : 1.0f, .light = f ? 180.0f : BARE_ZERO });
+        end();
+    }
+    const BareElem *e = elem(BARE_ID("lens"));
+    CHECK_NEAR(e->box.glass.zoom, 1.5, 0.01);
+    CHECK_NEAR(e->box.glass.light, 90, 1);
+    CHECK_NEAR(e->glass_amount, 1, 0);       /* it was glass all along */
+    reset();
+}
+
+TEST(glass_without_animation_is_whole) {
+    begin();
+    bare_box(.width = 80, .height = 80, .glass = BARE_GLASS);
+    const BareGlassCmd *g = glass_cmd(end());
+    CHECK(g && g->amount == 1.0f && g->zoom == 1.0f && g->light == 0.0f);
+    reset();
+}
+
 int main(void) {
     RUN(bezier_matches_css);
     RUN(spring_reaches_target);
@@ -401,5 +462,8 @@ int main(void) {
     RUN(opacity_animates_into_children);
     RUN(moving_to_another_parent_glides_from_where_it_was);
     RUN(channel_sets_are_reused);
+    RUN(glass_condenses_and_dissolves);
+    RUN(glass_settings_animate);
+    RUN(glass_without_animation_is_whole);
     return test_report();
 }

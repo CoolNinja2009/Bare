@@ -99,7 +99,8 @@ typedef struct BareElem {
     float       opacity;            /* effective (times ancestors) */
     float       vscale;             /* visual transform (offset and scale, with ancestors'): */
     BareVec2    vt;                 /*   drawn at rect * vscale + vt (layout.c, after the passes) */
-    bool        glass;              /* box.glass is on (fields resolved) */
+    bool        glass;              /* box.glass is drawn (fields resolved; animated after bare__animate) */
+    float       glass_amount;       /* 0..1: glass fading in or out */
     float       fit[2];             /* preferred (max-content) size per axis, layout passes 1/4 */
     float       minc[2];            /* min-content size per axis: shrinking stops here */
     bool        frozen;             /* layout scratch: size settled at a min/max while growing */
@@ -123,6 +124,10 @@ enum {
     BARE__CH_BORDER = 20, BARE__CH_RADIUS, BARE__CH_OPACITY, BARE__CH_SCALE,
     BARE__CH_OFFSET_X, BARE__CH_OFFSET_Y,
     BARE__CH_SHADOW_X, BARE__CH_SHADOW_Y, BARE__CH_SHADOW_BLUR, BARE__CH_SHADOW_SPREAD,
+    BARE__CH_GLASS_TINT,                                     /* r g b a */
+    BARE__CH_GLASS = BARE__CH_GLASS_TINT + 4,                /* amount: 1 = glass, 0 = none */
+    BARE__CH_REFRACTION, BARE__CH_DEPTH, BARE__CH_GLASS_BLUR, BARE__CH_DISPERSION,
+    BARE__CH_SHINE, BARE__CH_ZOOM, BARE__CH_LIGHT,
     BARE__CH_COUNT
 };
 

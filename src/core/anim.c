@@ -13,6 +13,8 @@
 #include <math.h>
 #include <string.h>
 
+_Static_assert(BARE__CH_COUNT <= 64, "one active bit per channel");
+
 #define MAX_DT (1.0f / 20.0f)   /* a stall can't throw anything across the screen */
 
 /* Settling thresholds per channel, in its own units: a channel closer than this
@@ -21,8 +23,11 @@
 
 static float settle_eps(int c) {
     if (c >= BARE__CH_COLOR && c < BARE__CH_BORDER) return 0.25f;   /* 0..255 */
-    if (c == BARE__CH_OPACITY) return 0.001f;
-    if (c == BARE__CH_SCALE) return 0.0001f;
+    if (c >= BARE__CH_GLASS_TINT && c < BARE__CH_GLASS) return 0.25f;
+    if (c == BARE__CH_OPACITY || c == BARE__CH_GLASS || c == BARE__CH_REFRACTION || c == BARE__CH_DISPERSION ||
+        c == BARE__CH_SHINE)
+        return 0.001f;
+    if (c == BARE__CH_SCALE || c == BARE__CH_ZOOM) return 0.0001f;
     return 0.01f;                                                  /* pixels */
 }
 
@@ -154,6 +159,32 @@ static void targets_of(const BareElem *e, const BareElem *p, float *t) {
     t[BARE__CH_SHADOW_Y] = b->shadow.y;
     t[BARE__CH_SHADOW_BLUR] = b->shadow.blur;
     t[BARE__CH_SHADOW_SPREAD] = b->shadow.spread;
+    const BareGlass *g = &b->glass;   /* all 0 when the element has no glass */
+    put_color(t + BARE__CH_GLASS_TINT, g->tint);
+    t[BARE__CH_GLASS] = e->glass ? 1.0f : 0.0f;
+    t[BARE__CH_REFRACTION] = g->refraction;
+    t[BARE__CH_DEPTH] = g->depth;
+    t[BARE__CH_GLASS_BLUR] = g->blur;
+    t[BARE__CH_DISPERSION] = g->dispersion;
+    t[BARE__CH_SHINE] = g->shine;
+    t[BARE__CH_ZOOM] = e->glass ? g->zoom : 1.0f;
+    t[BARE__CH_LIGHT] = g->light;
+}
+
+/* Glass coming and going: it condenses out of the backdrop and dissolves back
+ * into it. Going away, its bending, frost, fringes and tint fade out while
+ * its shape and light stay put; coming from nothing, it starts with the new
+ * shape and light and no bending yet. */
+static void glass_ends(BareAnimSet *s, float *t) {
+    BareChannel *ch = s->ch;
+    static const int keep[] = { BARE__CH_DEPTH, BARE__CH_SHINE, BARE__CH_LIGHT,
+                                BARE__CH_GLASS_TINT, BARE__CH_GLASS_TINT + 1, BARE__CH_GLASS_TINT + 2 };
+    const int n = (int)(sizeof keep / sizeof keep[0]);
+    if (t[BARE__CH_GLASS] == 0) {
+        for (int i = 0; i < n; i++) t[keep[i]] = ch[keep[i]].target;
+    } else if (ch[BARE__CH_GLASS].value < 0.001f) {
+        for (int i = 0; i < n; i++) ch[keep[i]].value = ch[keep[i]].from = ch[keep[i]].target = t[keep[i]];
+    }
 }
 
 /* Fading to or from transparent changes only the alpha, as CSS's premultiplied
@@ -194,6 +225,18 @@ static void apply(BareElem *e, const BareElem *p, const float *v) {
     b->shadow.y = v[BARE__CH_SHADOW_Y];
     b->shadow.blur = fmaxf(v[BARE__CH_SHADOW_BLUR], 0.0f);
     b->shadow.spread = v[BARE__CH_SHADOW_SPREAD];
+    /* Glass is drawn while any of it is left; merge isn't animated. */
+    BareGlass *g = &b->glass;
+    e->glass_amount = fminf(fmaxf(v[BARE__CH_GLASS], 0.0f), 1.0f);
+    e->glass = e->glass_amount > 0.001f;
+    g->tint = get_color(v + BARE__CH_GLASS_TINT);
+    g->refraction = v[BARE__CH_REFRACTION];
+    g->depth = fmaxf(v[BARE__CH_DEPTH], 0.0f);
+    g->blur = fmaxf(v[BARE__CH_GLASS_BLUR], 0.0f);
+    g->dispersion = fmaxf(v[BARE__CH_DISPERSION], 0.0f);
+    g->shine = fmaxf(v[BARE__CH_SHINE], 0.0f);
+    g->zoom = fmaxf(v[BARE__CH_ZOOM], 0.01f);
+    g->light = v[BARE__CH_LIGHT];
 }
 
 /* Steps one element's channels; returns its active bits. */
@@ -230,6 +273,7 @@ static uint64_t animate_set(BareAnimSet *s, BareElem *e, const BareElem *p, floa
     transparent_ends(s, t, BARE__CH_BORDER_COLOR, BARE__CH_BORDER_COLOR + 3);
     transparent_ends(s, t, BARE__CH_TEXT_COLOR, BARE__CH_TEXT_COLOR + 3);
     transparent_ends(s, t, BARE__CH_SHADOW_COLOR, BARE__CH_SHADOW_SPREAD);
+    glass_ends(s, t);
 
     BareAnim look = resolve_spec(e->box.animate);
     BareAnim lay = resolve_spec(e->box.animate_layout);

@@ -380,8 +380,27 @@ Presets: `BARE_GLASS` (clear, Apple style) and `BARE_GLASS_FROSTED` (blurry, lik
            .blur = BARE_ZERO,       /* frost, px (default 2; BARE_ZERO = crystal clear) */
            .dispersion = 1,         /* rainbow fringe at the rim */
            .shine = 1,              /* rim highlight */
+           .zoom = 1.5f,            /* magnify what's behind, like a loupe (default 1) */
+           .light = 90,             /* turn the light catching the rim, degrees clockwise */
            .tint = BARE_RGBA(255, 255, 255, 20) }
 ```
+
+**Glass in motion:** with `.animate`, every glass setting animates like the rest of the look, and so does turning glass
+on and off: it condenses out of what's behind it and dissolves back into it. A control can turn to glass only while it's
+held, the way a switch's knob lifts off its track:
+
+```c
+bool held = bare_this().pressed;
+bare_box(.width = held ? 120 : 90, .height = held ? 80 : 56, .radius = 40,
+         .color = held ? BARE_RGBA(255, 255, 255, 0) : BARE_WHITE,    /* solid white fades out... */
+         .glass = held ? (BareGlass){ .refraction = 1, .zoom = 1.15f } : (BareGlass){ 0 },   /* ...glass condenses */
+         .animate = BARE_SPRING(0.38f, 0.72f));
+```
+
+Change the tint, size and radius together and a round lens turns into a red capsule button.
+`examples/glass_motion/` plays five such moments on a loop: a lens forming and dissolving, a capsule with a turning
+light, a loupe that lifts off a colour wheel and magnifies it, the loupe morphing into a tinted button over a
+checkerboard, and a switch whose knob turns to glass while held (`glass_motion 4.4` starts 4.4 s in).
 
 **Merging:** glass siblings declared one after another with `.merge` melt into each other like drops of liquid when
 they come within that many pixels. Up to 8 shapes merge into one surface.
@@ -392,7 +411,7 @@ bare_box(.width = 90, .height = 90, .radius = 45, .glass = { .merge = 50 }, .off
 ```
 
 Glass is the most expensive thing Bare draws (each glass group copies the screen), so use it for a few hero elements,
-not for every list row. `examples/glass.c` is the showcase.
+not for every list row. `examples/glass.c` and `examples/glass_motion/` are the showcases.
 
 ## 12. Canvases and your own shaders
 
@@ -510,4 +529,4 @@ and `bench/` measures it against the same simulation running in Edge.
 
 Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): text and images (M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `glass_motion/` and `fluid/` today.
