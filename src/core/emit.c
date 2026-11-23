@@ -20,9 +20,10 @@ static BareDrawCmd *push_cmd(BareContext *ctx) {
 /* Snaps the layout rect to whole physical pixels (edges, not sizes, so
  * neighbouring boxes never gap or overlap), then adds the visual offset
  * unsnapped so moving elements glide instead of stepping a pixel at a time.
- * Scaled elements are in motion or deliberately off-grid: no snapping. */
+ * Scaled and animating elements are in motion or deliberately off-grid: no
+ * snapping (they land on the grid when they settle). */
 static BareRect place(const BareElem *e, float s) {
-    if (e->vscale != 1.0f) {
+    if (e->vscale != 1.0f || e->moving) {
         BareRect v = bare__visual_rect(e);
         BareRect o = { v.x * s, v.y * s, v.w * s, v.h * s };
         return o;

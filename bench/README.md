@@ -79,6 +79,9 @@ Bare's own setup (pipelines, fonts, first layout) and process launch add roughly
 
 ### History
 
+- M4 added an animation pass over every element each frame. Rerun 2026-11-23 (Bare side only): 8.1% of a core,
+  92 MB working set, 157 MB private, idle 0%: unchanged.
+
 - Texture cycling on canvas passes (SDL GPU `cycle = true`) gave every write to a ping-pong canvas
   a new copy of its memory: 418 MB private. Removed: 158 MB.
 - The original's dither was added before gamma correction, which turned it into visible grain of up

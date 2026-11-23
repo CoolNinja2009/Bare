@@ -141,13 +141,13 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
 
 ## Current status
 
-**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction) and Canvas (custom GPU shaders) done.**
-Next: M4 (animation); the optimizations below can be interleaved.
+**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders) and M4
+(animation) done.** Next: M5 (text and images); the optimizations below can be interleaved.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
-  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `fluid/`. 6 test
-  programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `fluid/`. 7
+  test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -159,6 +159,13 @@ Next: M4 (animation); the optimizations below can be interleaved.
   `.press` looks applied the same frame, `.cursor`, `.passthrough`, rounded-corner and clip-aware hits, keys
   (layout-aware), focus loss releases everything, wheel offsets stored per scroll container. `.scale` works
   (visual transform about the centre, composed with `.offset`, drawn and hit-tested).
+- Animation (M4): `.animate` / `.animate_layout` with `BARE_EASE` (cubic-bezier, CSS values) or `BARE_SPRING`
+  (closed-form, dt-independent); every look and the layout rect animate; retargeting keeps value (and spring velocity);
+  positions are relative to the parent (children ride along), and an id moved to another parent glides from where it
+  was; transparent ends keep the colour; animating elements are drawn unsnapped; first appearance never animates.
+  Channel sets (30 floats each) come from a pool only for elements that animate (`src/core/anim.c`). `cards.c`
+  (springy shuffle button, cards gliding between columns, widen switch) checked by mid-flight captures from a scratch
+  build; idle CPU is 0 after settling.
 - Canvas: `bare_canvas` (RGBA8 / RGBA16F / RG16F / R16F, nearest, repeat), `bare_shader`, `bare_pass` (up to 8
   inputs, std140 params, blend none/add/over), `bare_add_shaders()` in CMake, `.image` boxes, `bare_image_size`,
   `bare_image_from_pixels`, `bare_pixel_scale()`. GPU ops are queued in `src/core/gpu.c` and run by the renderer
@@ -169,10 +176,10 @@ Next: M4 (animation); the optimizations below can be interleaved.
 - Benchmark (`bench/README.md`, 2026-11-23, RTX 5070, 200 Hz): Fluids in Bare vs the WebGL original in Edge, both at
   200 fps: CPU 7.8-8.2% of a core vs 22-37%; GPU equal (~6%); working set 90-153 MB vs 461-626 MB; 1 process vs
   8-18; idle 0% vs never idle; startup ~640 ms vs ~720 ms; one 4.2 MB exe.
-- Stand-ins until their milestone: looks switch instantly until M4 animates them; text and image loading are not
-  implemented (bare_text, bare_image_load etc. are declared but don't link yet); the text-measure hook in layout
+- Stand-ins until their milestone: text and image loading are not implemented (bare_text, bare_image_load etc. are declared but don't link yet); the text-measure hook in layout
   pass 3 arrives with text in M5; clip push/pop pairing is tested when clips exist (M6).
-- Not verified: DPI scale above 100% (this display is 100%; the core's 1.5x/2x maths is unit-tested); live window
+- Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
+  and the motion was checked in captures); DPI scale above 100% (this display is 100%; the core's 1.5x/2x maths is unit-tested); live window
   resizing on Windows (SDL's modal resize loop may pause drawing while dragging: render from an event watch if so),
   so `layout.c`'s reflow was only checked at its starting size; canvases on Metal (MSL is generated, untested).
 - User decisions: both loop styles (`bare_frame` loop + `bare_run`); dependencies via FetchContent; liquid glass was

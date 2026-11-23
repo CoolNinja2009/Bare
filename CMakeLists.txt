@@ -37,6 +37,9 @@ add_library(bare_core STATIC
     src/core/context.c
     src/core/tree.c
     src/core/layout.c
+    src/core/easing.c
+    src/core/spring.c
+    src/core/anim.c
     src/core/emit.c
     src/core/hit.c
     src/core/input.c

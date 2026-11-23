@@ -119,7 +119,14 @@ idle; startup not yet a win. See bench/README.md.
 **Still to do:** update an existing image's pixels (video, GIF previews); read a canvas back to the CPU; compute
 shaders; passes into a sub-rectangle (scissor) of a canvas; vertex input for meshes.
 
-## [ ] M4: Animation system
+## [x] M4: Animation system
+
+Done 2026-11-23. `.scale` / `.offset` transforms had already arrived in M3. Channel sets are allocated only for
+elements that ask for animation (a recycled pool), so static UI costs nothing. Beyond the plan: an element moved to
+another parent glides from where it was; fading to or from transparent keeps the colour (as CSS's premultiplied
+interpolation does); animating elements are drawn unsnapped; the first step after idle is one frame, not the whole
+sleep. Tests: `tests/test_anim.c` (19). Checked by capturing frames mid-shuffle from a scratch build (not committed);
+idle CPU measured at 0 after settling; the fluid benchmark is unchanged (8.1% of a core, 92 MB).
 
 **Goal:** every animatable property moves toward its target with easing curves or springs, interruptibly.
 
@@ -262,9 +269,9 @@ needed; **beyond** = something the web can't do as easily.
 | `transform: translate()` | `.offset` (sub-pixel smooth, children included) | done |
 | `transform: scale()` | `.scale` (drawn and hit-tested) | done |
 | `rotate()`, `transform-origin` | `.rotate`, `.origin` | M10 |
-| `transition` with `cubic-bezier` | `.animate = BARE_EASE(0.3, BARE_EASE_OUT)` | M4 |
-| spring physics, interruptible without jumps | `BARE_SPRING(response, damping)` | M4, beyond |
-| animate layout changes (FLIP by hand on the web) | `.animate_layout`: moved elements glide | M4, beyond |
+| `transition` with `cubic-bezier` | `.animate = BARE_EASE(0.3, BARE_EASE_OUT)` | done |
+| spring physics, interruptible without jumps | `BARE_SPRING(response, damping)` | done, beyond |
+| animate layout changes (FLIP by hand on the web) | `.animate_layout`: moved elements glide, even to another parent | done, beyond |
 | `@keyframes`, looping animation | any value computed from `bare_time()` | C |
 | enter / exit transitions | | later |
 | **Text** | | |
@@ -274,7 +281,7 @@ needed; **beyond** = something the web can't do as easily.
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
 | `<input>`, `<textarea>`, selection | text input and editing | later (needed for ScreenPlus) |
 | **Interaction (the JS part)** | | |
-| `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks (instant until M4 animates them) | done |
+| `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks, animated by `.animate` | done |
 | `onclick`, `oncontextmenu`, hover | `if (bare_box(...).clicked)`: the return value; clicks bubble | done |
 | `cursor`, `pointer-events: none` | `.cursor`, `.passthrough` | done |
 | keyboard events | `bare_key_down`, `bare_key_pressed` (layout-aware letters) | done |

@@ -162,6 +162,8 @@ void bare__store_evict(BareContext *ctx, uint64_t frame) {
         BareNode *n = &s->nodes[i];
         if (n->id == 0 || n->last_frame == frame) continue;
         table_remove(s, n->id);
+        bare__anim_release(ctx, n->anim);   /* exit transitions will hook in here */
+        n->anim = 0;
         n->id = 0;
         n->next_free = s->free_head;
         s->free_head = i;

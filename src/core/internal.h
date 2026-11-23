@@ -71,6 +71,7 @@ typedef struct BareNode {
     uint64_t last_frame;       /* frame it was last declared in */
     BareRect rect;             /* where it was drawn last frame (visual: offset and scale), logical pixels */
     BareVec2 scroll;           /* wheel-driven scroll offset (applied to layout in M6) */
+    uint32_t anim;             /* animation set index + 1; 0 = never animated (anim.c) */
     bool     dup_warned;       /* a duplicate of this explicit ID was reported once */
 } BareNode;
 
@@ -102,10 +103,49 @@ typedef struct BareElem {
     float       fit[2];             /* preferred (max-content) size per axis, layout passes 1/4 */
     float       minc[2];            /* min-content size per axis: shrinking stops here */
     bool        frozen;             /* layout scratch: size settled at a min/max while growing */
-    BareRect    rect;               /* layout result, logical pixels, window coordinates */
+    bool        moving;             /* its position or size is animating (or an ancestor's): drawn unsnapped */
+    BareRect    rect;               /* layout result, then (after bare__animate) the animated rect */
+    BareRect    target;             /* the layout result, kept by bare__animate */
 } BareElem;
 
 #define BARE__MAX_DEPTH 256
+
+/* ---- animation (easing.c, spring.c, anim.c) ------------------------------ */
+
+/* One float per animatable property. x and y are relative to the parent, so a
+ * moving parent carries its children. Colours are in 0..255 units. */
+enum {
+    BARE__CH_X, BARE__CH_Y, BARE__CH_W, BARE__CH_H,          /* layout: .animate_layout */
+    BARE__CH_COLOR = 4,                                      /* r g b a, then the same for: */
+    BARE__CH_BORDER_COLOR = 8,
+    BARE__CH_TEXT_COLOR = 12,
+    BARE__CH_SHADOW_COLOR = 16,
+    BARE__CH_BORDER = 20, BARE__CH_RADIUS, BARE__CH_OPACITY, BARE__CH_SCALE,
+    BARE__CH_OFFSET_X, BARE__CH_OFFSET_Y,
+    BARE__CH_SHADOW_X, BARE__CH_SHADOW_Y, BARE__CH_SHADOW_BLUR, BARE__CH_SHADOW_SPREAD,
+    BARE__CH_COUNT
+};
+
+typedef struct BareChannel {
+    float value, velocity;      /* what's drawn; units per second */
+    float target;
+    float from, t;              /* easing: where it started and progress 0..1 */
+} BareChannel;
+
+typedef struct BareAnimSet {
+    BareChannel ch[BARE__CH_COUNT];
+    uint64_t    active;         /* bit per channel still moving */
+    BareId      parent;         /* the parent x/y were relative to last frame */
+    BareVec2    abs;            /* last animated position, window coordinates */
+    bool        ready;          /* channels hold values (a new set snaps to its targets) */
+    int32_t     next_free;
+} BareAnimSet;
+
+float bare__bezier(const float b[4], float x);                      /* CSS cubic-bezier: progress -> eased */
+void  bare__spring_step(float *x, float *v, float response, float damping, float dt);
+void  bare__animate(BareContext *ctx);                              /* layout targets -> visual values */
+void  bare__anim_release(BareContext *ctx, uint32_t anim);          /* a node holding it was evicted */
+void  bare__anim_free(BareContext *ctx);
 
 /* ---- images, shaders and passes (gpu.c) ---------------------------------- */
 
@@ -176,6 +216,12 @@ struct BareContext {
     BareShaderRec *shaders; int shader_count, shader_cap, shader_free;
     BareGpuQueue   gpu_pending, gpu_published;
 
+    BareAnimSet  *anims;   int anim_count, anim_cap, anim_free;   /* pool; nodes point in by index + 1 */
+    bool          anim_active;      /* some channel was still moving at the end of the last frame */
+    bool          anim_started;     /* anim_time is valid */
+    double        anim_time;        /* time of the last animation step */
+    float         anim_frame;       /* last measured frame interval while animating */
+
     BareDrawCmd  *cmds;    int cmd_count, cmd_cap;
     BareDrawList  list;
 
@@ -200,8 +246,9 @@ int  bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int
 void bare__tree_begin(BareContext *ctx);
 void bare__tree_end(BareContext *ctx);
 
-/* layout.c: the flexbox passes, then visual transforms (vscale, vt) */
+/* layout.c: the flexbox passes; then (after bare__animate) visual transforms (vscale, vt) */
 void bare__layout(BareContext *ctx);
+void bare__transforms(BareContext *ctx);
 
 /* hit.c */
 void bare__hits_build(BareContext *ctx);

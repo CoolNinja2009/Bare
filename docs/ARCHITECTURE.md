@@ -80,6 +80,7 @@ bare_frame() #N
  │    1. close the root; report unclosed containers (file:line where opened)
  │    2. layout        flexbox passes over the tree           -> target rects
  │    3. animate       move every channel toward its target   -> visual values
+ │                     then .offset / .scale transforms        -> drawn rects
  │    4. hit list      visual rects + clips in paint order    -> kept for frame N
  │    5. emit          tree + visual values                   -> BareDrawList
  │    6. publish       GPU ops queued this frame (canvases)   -> list.ops
@@ -130,7 +131,7 @@ typedef struct BareNode {
     BareRect  visual_rect;       /* last drawn rect (after animation and scale) */
     uint32_t  flags;             /* hovered, pressed, clicked, right_clicked, ... */
     BareVec2  scroll, scroll_target;
-    BareAnimSet anim;            /* animation channels, see §7 */
+    uint32_t  anim;              /* index + 1 of its animation channels (§7); 0 = never animated */
 } BareNode;
 ```
 
@@ -206,46 +207,69 @@ monospace measurer and never load a font.
 
 ### What animates
 
-Each node has a fixed set of **channels**, each one float:
+An element animates when it sets `.animate` (and optionally `.animate_layout`). Its node then gets a set of
+**channels**, one float each, from a pool in the context (sets are recycled when nodes are evicted, so most elements,
+which never animate, cost nothing):
 
 | Group | Channels | Spec used |
 |---|---|---|
-| layout | x, y (offset relative to the parent's visual position), width, height | `.animate_layout`, else `.animate` |
-| look | background rgba, border rgba, text rgba, border width, radius, opacity, scale, offset x/y, shadow x/y/blur/spread/rgba | `.animate` |
+| layout | x, y (relative to the parent), width, height | `.animate_layout`, else `.animate` |
+| look | background rgba, border rgba, text rgba, shadow rgba (0..255), border width, radius, opacity, scale, offset x/y, shadow x/y/blur/spread | `.animate` |
 | scroll | scroll x/y | built-in smooth spring (M6) |
 
-Positions animate relative to the parent, so when a parent moves its children move with it rigidly instead of each
-lagging on its own. Scale and offset are visual-only transforms (like CSS `transform`): they never change layout, they
-apply to the element and its children, and hit testing uses the transformed rects.
+Glass parameters don't animate yet. Positions animate relative to the parent: the target is the element's layout
+position minus its parent's, and the drawn position is the parent's *drawn* position plus the channel. So when a parent
+moves, its children move with it rigidly instead of each lagging on its own, and elements that don't animate at all are
+still carried by an animating parent. Scale and offset are visual-only transforms (like CSS `transform`): they never
+change layout, apply to the element and its children, and hit testing uses the transformed rects.
 
 ```c
 typedef struct BareChannel {
-    float value, velocity;   /* current visual value; velocity in units/second */
+    float value, velocity;   /* what's drawn; units per second */
     float target;
-    float from, t;           /* easing: start value and progress 0..1 */
+    float from, t;           /* easing: where it started and progress 0..1 */
 } BareChannel;
 
 typedef struct BareAnimSet {
-    BareChannel ch[BARE_CHANNEL_COUNT];
-    uint64_t    active;      /* bit per channel still moving; 0 = node idle */
+    BareChannel ch[BARE__CH_COUNT];   /* 30 */
+    uint64_t    active;               /* bit per channel still moving */
+    BareId      parent;               /* the parent x/y were relative to last frame */
+    BareVec2    abs;                  /* last drawn position, window coordinates */
+    bool        ready;
 } BareAnimSet;
 ```
 
 ### Each frame
 
-For every declared node: compare each new target with the channel's target. If it changed, **retarget**; then advance
-every active channel by `dt` (clamped to 1/20 s so a stall can't blow anything up).
+After layout, `anim.c` walks the elements top-down. The layout rect and the resolved looks (hover and press included)
+are the targets; the element's rect and looks are overwritten with the animated values, and the layout rect is kept in
+`BareElem.target`. Transforms, hit testing and emit only ever see the animated values.
 
-- **No animation** (`kind == BARE_ANIM_NONE`, the default): value = target.
-- **Easing**: retarget sets `from = value`, `t = 0`. Each frame `t += dt / duration`, `value = lerp(from, target,
-  bezier(t))`. Interrupting starts from where the value *is*, so there is never a jump in position (velocity may change
-  abruptly; use springs for fully smooth interruption). Cubic-bezier is solved for x with Newton steps plus a bisection
-  fallback, as browsers do.
-- **Spring**: parameterised like SwiftUI: `response` (period in seconds) and `damping` ratio (1 = critical, < 1 bounces).
-  Stiffness `k = (2π / response)²`, damping `c = 4π·damping / response`, mass 1. Each frame advances `(value - target,
-  velocity)` with the **closed-form** solution for the under-, critically- or over-damped case, so it is exact and
-  stable at any `dt`. Retargeting keeps value *and* velocity: interruption is smooth in both.
-- A channel settles when it is within 0.01 units of its target with near-zero velocity: it snaps and clears its bit.
+- **A new set** (first appearance, or the first frame an element asks for animation) snaps every channel to its target:
+  nothing flies in from 0.
+- **No animation** (`kind == BARE_ANIM_NONE`): value = target.
+- **Retarget**: when a target differs from the channel's, the channel starts from wherever its value *is*.
+- **Easing**: `t += dt / duration`, `value = lerp(from, target, bezier(t))`. Interrupting restarts from the current
+  value, so there's never a jump in position (velocity may change abruptly; springs avoid even that). The bezier is
+  solved for x with Newton steps plus a bisection fallback, as browsers do. Defaults: 0.25 s, CSS `ease`
+  (0.25, 0.1, 0.25, 1). The ease's velocity is tracked too, so a spring can take over smoothly.
+- **Spring**: parameterised like SwiftUI: `response` (period in seconds, default 0.35) and `damping` ratio (default 1 =
+  critical, < 1 bounces; clamped to ≥ 0.02 so it always settles). Stiffness `k = (2π / response)²`, mass 1. Each frame
+  advances `(value - target, velocity)` with the **closed-form** solution for the under-, critically- or over-damped
+  case, so it is exact and stable at any `dt` (one 0.1 s step equals ten 0.01 s steps). Retargeting keeps value *and*
+  velocity: interruption is smooth in both.
+- **Settling**: a spring channel closer to its target than its threshold (0.01 px, 0.25 colour units, 0.001 opacity,
+  0.0001 scale) and slower than 10 thresholds per second snaps there and clears its bit; an ease lands when `t` reaches 1.
+- **BARE_ZERO** duration or response means instant.
+- **Transparent ends**: fading a colour to alpha 0 animates only its alpha, and fading in from alpha 0 starts from the
+  new colour (CSS interpolates premultiplied colours, which has the same effect): red fading out stays red. A shadow's
+  colour governs its geometry the same way, so a shadow fades in place.
+- **Moving to another parent** (same explicit id): the channel is re-expressed relative to the new parent from the
+  last drawn position, so the element glides from where it was.
+- **Snapping**: an element whose position or size is animating (or an ancestor's) is drawn unsnapped, like scaled ones,
+  so slow motion glides instead of stepping whole pixels; it lands on the pixel grid when it settles.
+- **Time**: `dt` is the frame interval, clamped to 1/20 s. Coming out of idle the clock has run on while nothing moved,
+  so the first step is one typical frame (the last measured animating interval, else 1/60 s), not the whole sleep.
 
 Colours animate per component in sRGB (as CSS does); OKLab interpolation can come later without API change.
 

@@ -1,8 +1,7 @@
 /*
  * bare.h: the whole public API of Bare, a small native UI framework in C11.
  *
- * STATUS: design sketch (declarations only). Nothing here is implemented yet.
- * The milestone that delivers each part is noted as (M1)...(M9); see docs/ROADMAP.md.
+ * Parts marked (M5)...(M9) aren't implemented yet; see docs/ROADMAP.md.
  *
  * The simplest program:
  *
@@ -93,7 +92,7 @@ typedef struct BareEdges { float top, right, bottom, left; } BareEdges;  /* CSS 
 #define BARE_ZERO              (-0.0f)
 
 /* ------------------------------------------------------------------------ */
-/* Element IDs (M2)                                                         */
+/* Element IDs                                                              */
 /* ------------------------------------------------------------------------ */
 
 /* Every element has a stable ID that keys its retained state (animations,
@@ -112,7 +111,7 @@ BareId bare_id(const char *name);
 BareId bare_id_index(const char *name, uint32_t index);
 
 /* ------------------------------------------------------------------------ */
-/* Layout values (M2)                                                       */
+/* Layout values                                                            */
 /* ------------------------------------------------------------------------ */
 
 /* .width / .height take a number of pixels or one of these: */
@@ -144,7 +143,7 @@ typedef enum BareScroll {
 } BareScroll;
 
 /* ------------------------------------------------------------------------ */
-/* Looks (M1, M4)                                                           */
+/* Looks                                                                    */
 /* ------------------------------------------------------------------------ */
 
 typedef struct BareShadow {
@@ -200,7 +199,7 @@ typedef enum BareCursor {
 } BareCursor;
 
 /* ------------------------------------------------------------------------ */
-/* Animation (M4)                                                           */
+/* Animation                                                                */
 /* ------------------------------------------------------------------------ */
 
 typedef enum BareAnimKind {
@@ -209,12 +208,18 @@ typedef enum BareAnimKind {
     BARE_ANIM_SPRING
 } BareAnimKind;
 
+/* How an element moves to new values: position, size, colours, opacity,
+ * radius, border, shadow, scale and offset (looks included). Interrupting an
+ * animation continues from where it is: no jumps. An element's first frame
+ * never animates. Positions are relative to the parent, so children ride
+ * along with a moving parent. Give elements that change place a stable id
+ * (BARE_IDI) so Bare can tell they moved. */
 typedef struct BareAnim {
     BareAnimKind kind;
-    float duration;       /* ease: seconds */
-    float bezier[4];      /* ease: cubic-bezier x1, y1, x2, y2 (as in CSS) */
-    float response;       /* spring: seconds, roughly the time to settle */
-    float damping;        /* spring: 1 = critically damped (no overshoot), < 1 bounces */
+    float duration;       /* ease: seconds (0 = default 0.25; BARE_ZERO = instant) */
+    float bezier[4];      /* ease: cubic-bezier x1, y1, x2, y2 as in CSS (all 0 = CSS `ease`) */
+    float response;       /* spring: seconds, roughly the time to settle (0 = default 0.35) */
+    float damping;        /* spring: 1 = critically damped (no overshoot), < 1 bounces (0 = default 1) */
 } BareAnim;
 
 /* Curves for BARE_EASE */
@@ -348,15 +353,15 @@ typedef struct BareBox {
     BareColor text_color;       /* inherited by text inside; alpha 0 = inherit */
     BareImage image;            /* drawn over .color, stretched to the box, rounded by .radius */
 
-    /* interaction (M3, M6) */
+    /* interaction */
     BareLook hover, press;      /* looks while hovered / pressed */
     BareCursor cursor;
     bool passthrough;           /* the mouse goes through it (CSS pointer-events: none); children still get it */
     bool clip;                  /* (M6) clip children to the box */
     BareScroll scroll;          /* (M6) scroll overflowing children; implies .clip */
 
-    /* animation (M4) */
-    BareAnim animate;           /* how every animatable property moves to its new value */
+    /* animation */
+    BareAnim animate;           /* how every animatable property moves to its new value (default: instantly) */
     BareAnim animate_layout;    /* overrides .animate for position and size */
 } BareBox;
 

@@ -261,7 +261,7 @@ static void position_pass(BareContext *ctx) {
  * never the layout. Each element ends up drawn at rect * vscale + vt:
  *   own:   p -> c + o + k (p - c)
  *   total: parent's transform after its own. */
-static void transform_pass(BareContext *ctx) {
+void bare__transforms(BareContext *ctx) {
     BareElem *el = ctx->elems;
     for (int i = 0; i < ctx->elem_count; i++) {
         BareElem *e = &el[i];
@@ -286,5 +286,4 @@ void bare__layout(BareContext *ctx) {
     fit_pass(ctx, 1);
     resolve_pass(ctx, 1);
     position_pass(ctx);
-    transform_pass(ctx);
 }

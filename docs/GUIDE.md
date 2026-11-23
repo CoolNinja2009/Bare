@@ -307,13 +307,48 @@ if (bare_key_down(BARE_KEY_CTRL) && bare_key_pressed(BARE_KEY_S)) save();
 
 ## 10. Movement
 
-Real transitions and springs are *(coming in M4)*: you'll set the new value and Bare animates to it:
+Set the new value and say how to get there; Bare animates to it:
 
 ```c
-bare_box(.width = open ? 300 : 60, .animate = BARE_SPRING_SNAPPY);   /* (coming in M4) */
+bare_box(.width = open ? 300 : 60, .height = 40, .animate = BARE_SPRING_SNAPPY);
 ```
 
-Today you can already move things smoothly yourself. `.offset` moves an element (and its children) without affecting
+`.animate` covers everything that can change: position, size, colours, opacity, radius, border, shadow, `.scale` and
+`.offset`, including the `.hover` and `.press` looks. Two kinds:
+
+- **Springs**, `BARE_SPRING(response, damping)`: `response` is roughly how long it takes (seconds), `damping` 1 settles
+  without overshoot and less than 1 bounces. `BARE_SPRING_SMOOTH`, `BARE_SPRING_SNAPPY` and `BARE_SPRING_BOUNCY` are
+  ready-made. Interrupt a spring halfway (hover in and out quickly) and it turns around smoothly, keeping its speed.
+- **Easing**, `BARE_EASE(seconds, curve)`, like a CSS transition: curves `BARE_LINEAR`, `BARE_EASE_IN`,
+  `BARE_EASE_OUT`, `BARE_EASE_IN_OUT` or `BARE_BEZIER(x1, y1, x2, y2)`. `{ .kind = BARE_ANIM_EASE }` alone is 0.25 s
+  of CSS's `ease`.
+
+`.animate_layout` overrides `.animate` for position and size, so a card can lift on hover with a snappy spring but
+glide to a new place with a smooth one:
+
+```c
+for (int k = 0; k < count; k++) {
+    int i = order[k];                                   /* shuffle `order` and the cards glide */
+    bare_column(.id = BARE_IDI("card", i), .width = 300, .padding = 20, .radius = 16,
+                .hover = { .offset = { 0, -6 } },
+                .animate = BARE_SPRING_SNAPPY, .animate_layout = BARE_SPRING_SMOOTH) { ... }
+}
+```
+
+What to know:
+
+- **Give moving things an id.** Bare tracks an element across frames by its id (section 8). A card that changes place
+  in a list needs `BARE_IDI("card", i)` with `i` belonging to the card, not to its place, or Bare sees a different card
+  appear in each slot instead of one card moving. The same id under another parent glides there too.
+- **Children ride along.** Positions animate relative to the parent, so when a card moves its contents move with it,
+  even if they don't animate themselves. Sizes don't ride along: give children `.animate_layout` too if their size
+  follows the parent's (otherwise they jump to their new size while the parent is still growing).
+- **Nothing flies in.** An element's first frame is drawn where it belongs; only later changes animate.
+- **Fading out**: animate `.opacity` to `BARE_ZERO`, or a colour to alpha 0; a colour fading to transparent keeps its
+  hue. (Animating elements out after you stop declaring them is for later.)
+- **Idle is still free.** Bare draws frames while something moves and goes back to sleep when everything has settled.
+
+You can also move things yourself, frame by frame. `.offset` moves an element (and its children) without affecting
 layout, like `transform: translate()`, and isn't rounded to whole pixels, so slow motion stays smooth:
 
 ```c
@@ -447,7 +482,8 @@ and `bench/` measures it against the same simulation running in Edge.
 | `transform: scale(1.05)` | `.scale = 1.05f` |
 | `cursor: pointer` | `.cursor = BARE_CURSOR_HAND` |
 | `keydown` | `bare_key_pressed(BARE_KEY_ENTER)` |
-| `transition: all .3s ease-out` | `.animate = BARE_EASE(0.3f, BARE_EASE_OUT)` *(M4)* |
+| `transition: all .3s ease-out` | `.animate = BARE_EASE(0.3f, BARE_EASE_OUT)` |
+| FLIP animations of layout changes | `.animate_layout = BARE_SPRING_SMOOTH` and stable ids |
 | text | `bare_text("Hello", .size = 20)` *(M5)* |
 | `overflow: auto` | `.scroll = ...` *(M6)* |
 | `class="card"` | `.style = &card` *(M7)* |
@@ -472,7 +508,6 @@ and `bench/` measures it against the same simulation running in Edge.
 
 ## 15. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): animation (M4), text and images
-(M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): text and images (M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c` and `fluid/` today.

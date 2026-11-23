@@ -35,6 +35,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     ctx->alloc = alloc;
     bare__arena_init(&ctx->frame, alloc, block);
     ctx->store.free_head = -1;
+    ctx->anim_free = -1;
     ctx->clear = BARE_RGB(24, 24, 28);
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
@@ -46,6 +47,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     if (current == ctx) current = NULL;
     bare__arena_free(&ctx->frame);
     bare__store_free(ctx);
+    bare__anim_free(ctx);
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
     bare__free(&ctx->alloc, ctx->hits, (size_t)ctx->hit_cap * sizeof *ctx->hits);
@@ -80,13 +82,15 @@ void bare_ctx_begin(BareContext *ctx, float width, float height, float scale, do
 }
 
 const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
-    if (still_animating) *still_animating = false;   /* animation arrives in M4 */
+    if (still_animating) *still_animating = false;
     if (!ctx->in_frame) {
         bare__log(ctx, "bare_ctx_end called without bare_ctx_begin");
         return &ctx->list;
     }
     bare__tree_end(ctx);
-    bare__layout(ctx);
+    bare__layout(ctx);        /* targets */
+    bare__animate(ctx);       /* what's drawn this frame */
+    bare__transforms(ctx);
     bare__emit(ctx);
     bare__gpu_publish(ctx);   /* images, shaders and passes called since the last frame */
 
@@ -98,7 +102,7 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
         const BareElem *e = &ctx->elems[i];
         if (e->node >= 0) ctx->store.nodes[e->node].rect = bare__visual_rect(e);
     }
-    if (bare__input_end(ctx) && still_animating) *still_animating = true;
+    if ((bare__input_end(ctx) || ctx->anim_active) && still_animating) *still_animating = true;
     bare__store_evict(ctx, ctx->frame_index);
     ctx->in_frame = false;
     ctx->frame_index++;

@@ -5,7 +5,7 @@
  * - cards that lift on hover; right-click one to select it
  * - keys: Space adds a dot, Backspace removes one, Escape clears
  *
- * Looks change instantly here; M4 makes them animate. Text comes in M5. */
+ * Looks change instantly here; cards.c animates them (.animate). Text comes in M5. */
 #include "bare.h"
 
 #define MAX_DOTS 48
