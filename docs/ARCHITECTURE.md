@@ -200,8 +200,13 @@ Passes (each a straight loop over the pre-order array):
 Widths are fully resolved before heights because text height depends on width. Rects are in logical pixels, window
 coordinates; snapping to physical pixels happens in `emit.c`.
 
-Text measuring goes through a callback held by the context (`BareMeasureText`), so layout tests in M2 use a fake
-monospace measurer and never load a font.
+Text is shaped when it's declared (`bare__text_new`), so pass 1 knows its unwrapped width and its longest unbreakable
+run; pass 3 wraps it at its final width. Shaping goes through the context's font backend (§13), so layout tests use a
+fake monospace backend and never need a real font.
+
+A content-sized (`BARE_FIT`) child across its parent's main axis, or in a stack, gets CSS's fit-content:
+`min(preferred, max(min-content, available))`. That is what makes a paragraph in a column wrap at the column's width
+instead of overflowing it.
 
 ## 7. Animation (`easing.c`, `spring.c`, `anim.c`)
 
@@ -512,36 +517,55 @@ never needs a shader compiler; the `bare_shaders` CMake target regenerates them 
 
 ## 13. Text (`text.c`, `font_stb.c`)
 
-- **Default font**: a Latin subset of Inter (SIL OFL), embedded at build time (≈ 100 KB), so `bare_text` works with no
-  setup. `-DBARE_DEFAULT_FONT=OFF` drops it for size-critical builds.
-- **Font backend interface** (internal, in `bare_core.h`), shaped so FreeType + HarfBuzz can replace stb_truetype
-  without touching layout or emit:
+- **Default font**: a Latin subset of Inter 4.1 Regular (SIL OFL), 36 KB, embedded at build time by
+  `cmake/embed_file.cmake`, so `bare_text` works with no setup. `-DBARE_DEFAULT_FONT=OFF` drops it for size-critical
+  builds (then text needs `bare_font_load`). `assets/fonts/README.md` has the subsetting recipe.
+- **Font backend interface** (in `bare_core.h`, chosen with `BareConfig.fonts`), shaped so FreeType + HarfBuzz can
+  replace stb_truetype without touching layout or emit:
 
 ```c
 typedef struct BareShapedGlyph { uint32_t glyph; float advance, x_offset, y_offset; uint32_t cluster; } BareShapedGlyph;
+typedef struct BareGlyphBitmap { int width, height, left, top; const unsigned char *pixels; int stride; } BareGlyphBitmap;
 
 typedef struct BareFontBackend {
-    void *(*load)(const void *data, int size);
+    void *(*load)(const BareAllocator *alloc, const void *data, int size);
     void  (*metrics)(void *font, float px, float *ascent, float *descent, float *line_gap);
     int   (*shape)(void *font, float px, const char *utf8, int len, BareShapedGlyph *out, int cap);
-    bool  (*rasterize)(void *font, uint32_t glyph, float px, BareGlyphBitmap *out);
+    bool  (*rasterize)(void *font, uint32_t glyph, float px, float shift_x, BareGlyphBitmap *out);
     void  (*unload)(void *font);
 } BareFontBackend;
 ```
 
-  The stb version "shapes" by mapping code points to glyphs with kerning. HarfBuzz will do real shaping.
-- **Glyph cache**: keyed by (font, glyph, physical pixel size), packed into an R8 atlas (1024² growing to 2048²) with a
-  shelf packer; new glyphs become `BareTextureUpload`s. Text is rasterized at physical size, so it's sharp at any DPI.
-  Scaled elements (`.scale` animations) stretch existing glyphs during the animation.
-- **Line breaking**: at spaces and after hyphens, falling back to breaking inside a word that doesn't fit. Full UAX #14
-  comes with HarfBuzz.
+  The stb version "shapes" by mapping code points to glyphs, with pair kerning from GPOS or `kern`. Sizes are em
+  sizes, as in CSS. HarfBuzz will do real shaping.
+- **A text element** is a leaf `BareElem` with a `BareText` payload in the frame arena: the string (copied), its
+  shaped glyphs at the logical size, ascent and descent, the unwrapped width and the longest unbreakable run; layout
+  pass 3 adds the lines. Line boxes are `size × line_height` tall with the font's box centred in them (CSS
+  half-leading); `.align` places each line inside the element's width.
+- **Line breaking** (greedy): at spaces, which hang off the line's end and are skipped at the next line's start; after
+  hyphens; inside a word only when no break fits. `
+` forces a break. Full UAX #14 comes with HarfBuzz.
+- **Glyph cache**: open addressing keyed by (font, glyph, physical size in 1/64 px, sub-pixel phase). Still text is
+  snapped to whole physical pixels with one of three horizontal sub-pixel phases, so it's sharp without uneven
+  spacing; moving or scaled text (`.scale` animations stretch existing glyphs) is placed unsnapped at phase 0.
+- **Atlas**: one R8 texture, 1024² growing to 2048² (old rows copied), packed by shelves (best-fitting shelf, else a
+  new one) with a 1-pixel gutter so bilinear sampling never bleeds. Its texture id is an internal image id, so it
+  never collides with the app's images. The core keeps the pixels; each frame's new glyphs become **one**
+  `BareTextureUpload` covering their bounding box (the whole atlas when it's new or grew). Glyph uvs are emitted in
+  pixels and normalised at the end of emit, because the atlas may grow mid-frame. When a 2048² atlas is full, the
+  frame skips the glyphs that don't fit, logs once, and asks for another frame; the atlas starts over at the start
+  of that frame.
+- **Colour**: emit walks the tree once, carrying the nearest `.text_color` down (white at the top), so animated or
+  hovered `.text_color` reaches the text inside.
+- **Images** (`image.c`): stb_image decodes PNG, JPEG, BMP, GIF (first frame) and TGA into RGBA8, then
+  `bare_image_from_pixels` queues them like any image (§9). stb's allocations go through the context's allocator.
 
 ## 14. Headless use and testing
 
 `bare_core.h` exposes the context directly:
 
 ```c
-BareContext *bare_ctx_create(const BareConfig *config);   /* allocator, measure-text, font backend */
+BareContext *bare_ctx_create(const BareConfig *config);   /* allocator, frame arena block, font backend */
 void         bare_ctx_make_current(BareContext *ctx);      /* the public bare_* calls act on this */
 void         bare_ctx_begin(BareContext *ctx, float w, float h, float scale, double time,
                             const BareEvent *events, int event_count);

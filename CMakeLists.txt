@@ -8,6 +8,7 @@ set_property(CACHE BARE_BACKEND PROPERTY STRINGS SDL3)
 option(BARE_BUILD_TESTS "Build the headless unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(BARE_BUILD_EXAMPLES "Build the examples" ${PROJECT_IS_TOP_LEVEL})
 option(BARE_BUILD_BENCH "Build the benchmarks (bench/; needs the examples)" OFF)
+option(BARE_DEFAULT_FONT "Embed the default font (Inter, Latin subset, ~36 KB) so text works with no setup" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -27,8 +28,16 @@ else()
     set(BARE_STRICT -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+include(FetchContent)
+
+# stb_truetype and stb_image (header-only), pinned to a commit.
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz
+    URL_HASH SHA256=87e9ecd2d2e0cb8fa35bf5a93ea6ca3999595ea4f0a4738ed1aac0a34cbd4da9)
+FetchContent_MakeAvailable(stb)
+
 # ---------------------------------------------------------------------------
-# Core: no platform headers, no dependencies beyond libc/libm.
+# Core: no platform headers, no dependencies beyond libc/libm (and stb).
 # ---------------------------------------------------------------------------
 add_library(bare_core STATIC
     src/core/arena.c
@@ -44,8 +53,24 @@ add_library(bare_core STATIC
     src/core/hit.c
     src/core/input.c
     src/core/gpu.c
+    src/core/text.c
+    src/core/font_stb.c
+    src/core/image.c
 )
 target_include_directories(bare_core PUBLIC include PRIVATE src/core)
+target_include_directories(bare_core SYSTEM PRIVATE ${stb_SOURCE_DIR})
+if(BARE_DEFAULT_FONT)
+    set(BARE_FONT_FILE ${PROJECT_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf)
+    set(BARE_FONT_C ${PROJECT_BINARY_DIR}/generated/bare_default_font.c)
+    add_custom_command(OUTPUT ${BARE_FONT_C}
+        COMMAND ${CMAKE_COMMAND} -DIN=${BARE_FONT_FILE} -DOUT=${BARE_FONT_C} -DNAME=bare__default_font
+            -P ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
+        DEPENDS ${BARE_FONT_FILE} ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
+        COMMENT "Embedding the default font"
+        VERBATIM)
+    target_sources(bare_core PRIVATE ${BARE_FONT_C})
+    target_compile_definitions(bare_core PRIVATE BARE_HAS_DEFAULT_FONT)
+endif()
 target_compile_options(bare_core PRIVATE ${BARE_STRICT})
 if(NOT MSVC)
     target_link_libraries(bare_core PUBLIC m)
@@ -55,7 +80,6 @@ endif()
 # Backend + simple API
 # ---------------------------------------------------------------------------
 if(BARE_BACKEND STREQUAL "SDL3")
-    include(FetchContent)
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)

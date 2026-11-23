@@ -6,7 +6,7 @@
  *
  *   1. fit x       bottom-up   preferred and minimum content widths
  *   2. resolve x   top-down    final widths: fixed, percent, grow, shrink, stretch
- *   3. (text wraps at its final width here: M5)
+ *   3. wrap text   top-down    at its final width, which gives its height
  *   4. fit y       bottom-up
  *   5. resolve y   top-down
  *   6. position    top-down    padding, gap, justify, align
@@ -75,6 +75,10 @@ static void fit_pass(BareContext *ctx, int a) {
             pref += gaps;
             minc += gaps;
         }
+        if (e->text) {   /* text: unwrapped line / longest word across; wrapped lines down */
+            pref = a ? bare__text_height(e->text) : e->text->max_line;
+            minc = a ? pref : e->text->min_word;
+        }
         pref += pads(b, a);
         minc += pads(b, a);
         if (kind(b, a) == FIXED) pref = minc = spec(b, a) > 0 ? spec(b, a) : 0;
@@ -94,7 +98,9 @@ static float cross_size(const BareElem *parent, const BareElem *c, int a, float 
     case GROW: return clamp_size(inner, b, a);
     default:
         if (parent->box.align == BARE_STRETCH) return clamp_size(inner, b, a);
-        return c->fit[a];
+        /* CSS fit-content: as wide as its content, but no wider than the
+         * space there is unless its minimum content needs more (text wraps). */
+        return BARE__MIN(c->fit[a], BARE__MAX(c->minc[a], inner));
     }
 }
 
@@ -282,7 +288,8 @@ void bare__layout(BareContext *ctx) {
     fit_pass(ctx, 0);
     root->rect = (BareRect){ 0, 0, ctx->width, ctx->height };
     resolve_pass(ctx, 0);
-    /* 3: text wraps here once it exists (M5): its height depends on its width. */
+    for (int i = 0; i < ctx->elem_count; i++)   /* 3: its height depends on its width */
+        if (ctx->elems[i].text) bare__text_wrap(ctx, ctx->elems[i].text, ctx->elems[i].rect.w);
     fit_pass(ctx, 1);
     resolve_pass(ctx, 1);
     position_pass(ctx);

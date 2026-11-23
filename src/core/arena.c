@@ -23,6 +23,36 @@ void bare__free(const BareAllocator *a, void *ptr, size_t size) {
     if (ptr) a->free(a->user, ptr, size);
 }
 
+/* For libraries (stb) whose free and realloc don't pass the size: the size
+ * rides in a 16-byte header in front of the block. */
+#define SIZED_HEADER 16
+
+void *bare__heap_alloc(const BareAllocator *a, size_t size) {
+    unsigned char *p = bare__alloc(a, size + SIZED_HEADER);
+    if (!p) return NULL;
+    memcpy(p, &size, sizeof size);
+    return p + SIZED_HEADER;
+}
+
+void *bare__heap_realloc(const BareAllocator *a, void *ptr, size_t size) {
+    if (!ptr) return bare__heap_alloc(a, size);
+    unsigned char *base = (unsigned char *)ptr - SIZED_HEADER;
+    size_t old;
+    memcpy(&old, base, sizeof old);
+    unsigned char *p = bare__realloc(a, base, old + SIZED_HEADER, size + SIZED_HEADER);
+    if (!p) return NULL;
+    memcpy(p, &size, sizeof size);
+    return p + SIZED_HEADER;
+}
+
+void bare__heap_free(const BareAllocator *a, void *ptr) {
+    if (!ptr) return;
+    unsigned char *base = (unsigned char *)ptr - SIZED_HEADER;
+    size_t size;
+    memcpy(&size, base, sizeof size);
+    bare__free(a, base, size + SIZED_HEADER);
+}
+
 bool bare__grow(const BareAllocator *a, void **items, int *cap, int need, size_t item_size) {
     if (need <= *cap) return true;
     int new_cap = *cap ? *cap : 64;

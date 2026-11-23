@@ -130,13 +130,25 @@ static void emit_glass(BareContext *ctx, int index, BareRect r, int *last_glass_
 
 void bare__emit(BareContext *ctx) {
     ctx->cmd_count = 0;
+    bare__text_begin_emit(ctx);
     int last_glass_cmd = -1, last_glass_parent = -2;
     float s = ctx->scale;
+    /* Text colour, inherited down the tree (white unless a .text_color says otherwise). */
+    BareColor *ink = bare__arena_alloc(&ctx->frame, sizeof *ink * (size_t)(ctx->elem_count + 1), 16);
     for (int i = 0; i < ctx->elem_count; i++) {
         const BareElem *e = &ctx->elems[i];
+        if (ink) {
+            BareColor up = e->parent >= 0 ? ink[e->parent] : BARE_WHITE;
+            ink[i] = e->box.text_color.a ? e->box.text_color : up;
+        }
         if (e->opacity <= 0) continue;
         BareRect r = place(e, s);
         if (r.w <= 0 || r.h <= 0) continue;
+        if (e->text) {
+            bool snap = e->vscale == 1.0f && !e->moving;
+            bare__text_emit(ctx, e->text, r, e->vscale, snap, color_f(ink ? ink[i] : BARE_WHITE, e->opacity));
+            continue;
+        }
         bool image = e->box.image && bare__image(ctx, e->box.image);
         if (e->glass) {
             emit_glass(ctx, i, r, &last_glass_cmd, &last_glass_parent);
@@ -151,8 +163,7 @@ void bare__emit(BareContext *ctx) {
     }
 
     BareDrawList *l = &ctx->list;
-    l->uploads = NULL;
-    l->upload_count = 0;
+    bare__text_end_frame(ctx);   /* the atlas upload */
     l->cmds = ctx->cmds;
     l->cmd_count = ctx->cmd_count;
     l->width = (int)roundf(ctx->width * ctx->scale);

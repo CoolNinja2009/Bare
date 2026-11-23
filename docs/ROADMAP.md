@@ -50,7 +50,8 @@ Done 2026-11-23.
   (loupe) and `.light` (rim light direction); `examples/glass_motion/`. Still to do: glass that wobbles/stretches with
   velocity (liquid feel), rotation (M10) for tilted entrances.
 - Light that responds to the content behind (adaptive tint and highlight), and optional pointer-driven light.
-- Glass inside clips and scroll containers (M6), glass on text (M5).
+- Glass inside clips and scroll containers (M6). ~~Glass on text (M5)~~ done: text on glass and glass refracting
+  text both work (`examples/text.c` loupe, labels in `glass_motion/` and the fluid panel).
 
 ## [x] M2: Flexbox layout and draw commands
 
@@ -144,7 +145,20 @@ bit; first appearance doesn't animate; a moving parent carries its children.
 reorders cards with `BARE_IDI` ids so they glide to new places.
 **Done when:** tests pass; hovering the button rapidly in and out never jumps; idle CPU returns to ~0% after settling.
 
-## [ ] M5: Text rendering
+## [x] M5: Text rendering
+
+Done 2026-11-23. stb is fetched as a tarball of a pinned commit (SHA-256 checked). Inter 4.1 Regular is subset to
+Latin plus common symbols with only its kerning kept (36 KB; `assets/fonts/README.md` has the recipe; its GPOS
+extension lookups are unwrapped so stb_truetype reads the kerning). Glyphs are cached at three horizontal sub-pixel
+positions, so still text is snapped to whole pixels without uneven spacing; moving or scaled text is drawn unsnapped.
+New glyphs become one upload per frame (the bounding box of what changed); a full 2048² atlas starts over the next
+frame and asks for that frame. Text elements size like CSS inline content in a flex item: as wide as the longest
+line, at most the space they get (fit-content, which now applies to every content-sized cross-axis child), and a
+row shrinks them down to their longest word. Default text colour is white (Bare's default background is dark).
+Tests: `tests/test_text.c` (29, with a fake monospace font backend plus Inter itself). The fluid panel got real labels
+on its frosted glass, `glass_motion` got "Play" and "Add". Not verified: 150%/200% on a real display (the 2x
+glyph maths is tested; this display is 100%) and live window resizing (see Current status in CLAUDE.md); narrower
+fixed-width captures rewrap as expected.
 
 **Goal:** sharp, wrapped text with the embedded default font; images.
 
@@ -262,7 +276,7 @@ needed; **beyond** = something the web can't do as easily.
 | several / inset shadows | | M10 |
 | `filter`, `mix-blend-mode` | `.filter`, blend modes | M10 |
 | `clip-path`, `mask`, rounded overflow clip | rounded clipping | later |
-| `<img>`, `object-fit` | `.image`, `bare_image_load`; object-fit in M10 | M5 |
+| `<img>`, `object-fit` | `.image`, `bare_image_load` (PNG, JPEG, BMP, GIF, TGA); object-fit in M10 | done |
 | `<canvas>` + WebGL / WebGL2 fragment shaders, render to texture | `bare_canvas`, `bare_shader`, `bare_pass` | done |
 | float textures (`RGBA16F`, `RG16F`, `R16F`), additive blending | `.format`, `.blend = BARE_BLEND_ADD` | done |
 | `devicePixelRatio` | `bare_pixel_scale()` | done |
@@ -277,8 +291,8 @@ needed; **beyond** = something the web can't do as easily.
 | `@keyframes`, looping animation | any value computed from `bare_time()` | C |
 | enter / exit transitions | | later |
 | **Text** | | |
-| text, wrapping, size, colour, line-height, align | `bare_text("...", .size = 20)` | M5 |
-| `@font-face` | `bare_font_load("x.ttf")` | M5 |
+| text, wrapping, size, colour (inherited), line-height, align, nowrap | `bare_text("...", .size = 20)`, `.text_color` | done |
+| `@font-face` | `bare_font_load("x.ttf")`, `bare_font_from_memory` | done |
 | letter-spacing, decoration, text-shadow, ellipsis | | M10 |
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
 | `<input>`, `<textarea>`, selection | text input and editing | later (needed for ScreenPlus) |

@@ -24,6 +24,16 @@ void  bare__free(const BareAllocator *a, void *ptr, size_t size);
  * Used for persistent arrays that grow only when the UI grows. */
 bool bare__grow(const BareAllocator *a, void **items, int *cap, int need, size_t item_size);
 
+#ifdef BARE_HAS_DEFAULT_FONT
+extern const unsigned char bare__default_font_data[];   /* generated from assets/fonts at build time */
+extern const int bare__default_font_size;
+#endif
+
+/* malloc-style (no size on free), for stb: the size is kept in a header. */
+void *bare__heap_alloc(const BareAllocator *a, size_t size);
+void *bare__heap_realloc(const BareAllocator *a, void *ptr, size_t size);
+void  bare__heap_free(const BareAllocator *a, void *ptr);
+
 /* ---- arena -------------------------------------------------------------- */
 
 typedef struct BareArenaBlock {
@@ -87,6 +97,50 @@ void bare__store_evict(BareContext *ctx, uint64_t frame);            /* drop nod
 int  bare__store_live(const BareContext *ctx);
 void bare__store_free(BareContext *ctx);
 
+/* ---- text (text.c, font_stb.c) ------------------------------------------ */
+
+typedef struct BareTextLine { int first, count; float width; } BareTextLine;
+
+/* A bare_text element's payload, in the frame arena. Shaped at its logical
+ * size when declared; wrapped by layout pass 3; drawn by emit. */
+typedef struct BareText {
+    const char      *str;   int len;
+    BareFont         font;
+    float            size, line_height;     /* pixels; line_height already multiplied */
+    BareAlign        align;
+    bool             nowrap;
+    BareColor        color;                 /* alpha 0 = inherited */
+    BareShapedGlyph *glyphs; int glyph_count;
+    float            ascent, descent;       /* at size */
+    float            max_line;              /* widest line without wrapping */
+    float            min_word;              /* widest run that can't be broken at a space or hyphen */
+    BareTextLine    *lines;  int line_count;
+} BareText;
+
+typedef struct BareFontRec {
+    void  *handle;                          /* the backend's; NULL until loaded */
+    void  *owned;  size_t owned_size;       /* file data read by bare_font_load */
+    bool   alive, failed;
+} BareFontRec;
+
+typedef struct BareGlyphSlot {              /* a rasterized glyph in the atlas */
+    uint64_t key;                           /* 0 = empty */
+    int16_t  x, y, w, h;                    /* atlas pixels */
+    int16_t  left, top;                     /* from the pen on the baseline */
+} BareGlyphSlot;
+
+typedef struct BareShelf { int y, h, x; } BareShelf;
+
+uint32_t bare__utf8_decode(const char *s, int len, int *i);   /* advances *i; U+FFFD for bad bytes */
+const BareFontBackend *bare__font_backend(const BareContext *ctx);
+BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareTextStyle *style);
+void  bare__text_wrap(BareContext *ctx, BareText *t, float width);
+float bare__text_height(const BareText *t);
+void  bare__text_begin_emit(BareContext *ctx);                 /* starts the atlas over if it filled up */
+void  bare__text_emit(BareContext *ctx, const BareText *t, BareRect r, float vscale, bool snap, BareColorF color);
+void  bare__text_end_frame(BareContext *ctx);                  /* atlas uploads, uv normalisation */
+void  bare__text_free(BareContext *ctx);
+
 /* ---- element tree ------------------------------------------------------- */
 
 typedef struct BareElem {
@@ -107,6 +161,7 @@ typedef struct BareElem {
     bool        moving;             /* its position or size is animating (or an ancestor's): drawn unsnapped */
     BareRect    rect;               /* layout result, then (after bare__animate) the animated rect */
     BareRect    target;             /* the layout result, kept by bare__animate */
+    BareText   *text;               /* bare_text payload (frame arena), NULL for boxes */
 } BareElem;
 
 #define BARE__MAX_DEPTH 256
@@ -158,6 +213,7 @@ typedef struct BareImageRec {
     int        width, height;
     BareFormat format;
     bool       alive, canvas;
+    bool       internal;        /* Bare's own (the glyph atlas): not the app's to free */
     int32_t    next_free;
 } BareImageRec;
 
@@ -227,6 +283,19 @@ struct BareContext {
     double        anim_time;        /* time of the last animation step */
     float         anim_frame;       /* last measured frame interval while animating */
 
+    const BareFontBackend *font_backend;
+    BareFontRec   *fonts;   int font_count, font_cap;     /* [0] = the default font */
+    BareGlyphSlot *glyphs;  int glyph_cap, glyph_used;   /* open addressing by key */
+    unsigned char *atlas;   int atlas_w, atlas_h;         /* R8 copy of the GPU atlas */
+    uint32_t       atlas_id;                              /* texture id (an image id), 0 until used */
+    BareShelf     *shelves; int shelf_count, shelf_cap;
+    int            dirty[4];                              /* x0 y0 x1 y1 to upload; x1 <= x0 = clean */
+    bool           atlas_full;                            /* reset before the next frame */
+    bool           text_redraw;                           /* glyphs were skipped: draw another frame */
+    int            text_cmd_first;                        /* first text cmd of this frame's emit */
+    int            raster_count;                          /* glyphs rasterized (tests) */
+    BareTextureUpload upload;
+
     BareDrawCmd  *cmds;    int cmd_count, cmd_cap;
     BareDrawList  list;
 
@@ -266,6 +335,7 @@ BareRect bare__visual_rect(const BareElem *e);
 void bare__gpu_publish(BareContext *ctx);       /* pending ops -> the draw list */
 void bare__gpu_free(BareContext *ctx);
 const BareImageRec *bare__image(const BareContext *ctx, BareImage id);   /* NULL unless alive */
+uint32_t bare__image_reserve(BareContext *ctx, int w, int h);           /* an id for an internal texture */
 
 /* input.c */
 void bare__input_begin(BareContext *ctx);       /* hover chain from the mouse */

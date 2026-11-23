@@ -141,14 +141,14 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
 
 ## Current status
 
-**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders) and M4
-(animation) done.** Next: M5 (text and images); the optimizations below can be interleaved.
+**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
+(animation) and M5 (text and images) done.** Next: M6 (clipping and scroll containers); the optimizations below can
+be interleaved.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
-  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `glass_motion/`,
-  `fluid/`. 7
-  test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
+  `glass_motion/`, `fluid/`. 8 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -174,6 +174,16 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
   frame by frame in the browser): lens condense/dissolve, capsule light sweep, loupe lift + magnify + glide, loupe →
   red capsule morph with a checkerboard opening behind, switch knob turning to glass while held. Gaps: no text (M5),
   no rotation (the reference's tilted entrance), backdrops are look-alikes, not the reference's footage.
+- Text and images (M5): `bare_text` / `bare_textf` with `.size`, `.line_height`, `.align`, `.nowrap`, `.font`,
+  `.color`, colour inherited from `.text_color` (white by default); `bare_font_load` / `from_memory`;
+  `bare_image_load` (stb_image: PNG, JPEG, BMP, GIF, TGA). Font backend interface in `bare_core.h`
+  (`BareConfig.fonts`), stb_truetype by default (`src/core/font_stb.c`); `src/core/text.c` has UTF-8, line breaking,
+  the glyph cache (three sub-pixel phases) and the shelf-packed R8 atlas (1024² growing to 2048², one upload per
+  frame). Inter 4.1 Regular, Latin subset with kerning (36 KB, `assets/fonts/`, embedded by `cmake/embed_file.cmake`).
+  stb comes from FetchContent as a tarball of a pinned commit. Layout: content-sized cross-axis children now get CSS
+  fit-content, so text wraps at its parent's width. `examples/text.c` (paragraph, sizes 10-48, alignment, avatar, a
+  glass loupe over the text); captures identical on D3D12, Vulkan and MSVC. Text on glass and glass refracting text
+  both work: the fluid panel has real labels on frosted glass, `glass_motion` has "Play" and "Add".
 - Canvas: `bare_canvas` (RGBA8 / RGBA16F / RG16F / R16F, nearest, repeat), `bare_shader`, `bare_pass` (up to 8
   inputs, std140 params, blend none/add/over), `bare_add_shaders()` in CMake, `.image` boxes, `bare_image_size`,
   `bare_image_from_pixels`, `bare_pixel_scale()`. GPU ops are queued in `src/core/gpu.c` and run by the renderer
@@ -182,14 +192,17 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
   Its dither is applied after gamma (the original's grain was a bug). Stirring, sliders and toggles were checked by
   injecting SDL events from a scratch build; captures checked on D3D12, Vulkan and an MSVC build.
 - Benchmark (`bench/README.md`, 2026-11-23, RTX 5070, 200 Hz): Fluids in Bare vs the WebGL original in Edge, both at
-  200 fps: CPU 7.8-8.2% of a core vs 22-37%; GPU equal (~6%); working set 90-153 MB vs 461-626 MB; 1 process vs
-  8-18; idle 0% vs never idle; startup ~640 ms vs ~720 ms; one 4.2 MB exe.
-- Stand-ins until their milestone: text and image loading are not implemented (bare_text, bare_image_load etc. are declared but don't link yet); the text-measure hook in layout
-  pass 3 arrives with text in M5; clip push/pop pairing is tested when clips exist (M6).
+  200 fps: CPU 7.4-8.2% of a core vs 22-37%; GPU equal (~6%); working set 90-153 MB vs 461-626 MB; 1 process vs
+  8-18; idle 0% vs never idle; startup ~650 ms vs Edge 525-720 ms (Edge was faster in the post-M5 run); one
+  4.3 MB exe. Unchanged after M5.
+- Stand-ins until their milestone: clip push/pop pairing is tested when clips exist (M6). `layout.c`, `cards.c` and
+  `buttons.c` still use grey bars where labels would go.
 - Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
-  and the motion was checked in captures); DPI scale above 100% (this display is 100%; the core's 1.5x/2x maths is unit-tested); live window
-  resizing on Windows (SDL's modal resize loop may pause drawing while dragging: render from an event watch if so),
-  so `layout.c`'s reflow was only checked at its starting size; canvases on Metal (MSL is generated, untested).
+  and the motion was checked in captures); DPI scale above 100%, including text sharpness at 150%/200% (this display
+  is 100%; the core's 1.5x/2x maths and glyph sizes are unit-tested); live window resizing on Windows (SDL's modal
+  resize loop may pause drawing while dragging: render from an event watch if so), so reflow and text rewrapping
+  were checked only with fixed window sizes; the loupe in `text.c` with a real mouse (captured with a fixed
+  position); canvases on Metal (MSL is generated, untested).
 - User decisions: both loop styles (`bare_frame` loop + `bare_run`); dependencies via FetchContent; liquid glass was
   the first showcase; ScreenPlus (`..\Wallpaper+\ScreenPlus`) is the first real app to port later; Bare must reach
   full HTML/CSS/JS parity and beyond (tracked in the roadmap's web parity checklist and M10); Bare changes must be
@@ -200,7 +213,7 @@ off the screen) and update `bench/README.md` and the **Optimizations** list belo
 
 Ordered by impact on the "beats the browser" claim. Numbers from `bench/` on the machine above.
 
-1. **Startup (~640 ms; Edge ~720 ms).** `SDL_CreateGPUDevice` alone is 350-430 ms on D3D12 (Vulkan: ~200 ms for
+1. **Startup (~650 ms; Edge measured 525-720 ms, so Edge can now win).** `SDL_CreateGPUDevice` alone is 350-430 ms on D3D12 (Vulkan: ~200 ms for
    the device + ~170 ms claiming the window); SDL init + window ~25 ms; Bare's own setup and process launch ~150 ms
    (`bench/startup.c` breaks it down). Ideas: create the GPU device on a thread while the window appears at once
    with the background colour painted (perceived startup in tens of ms); find how much of the D3D12 time is the
@@ -212,7 +225,7 @@ Ordered by impact on the "beats the browser" claim. Numbers from `bench/` on the
 3. **Memory (90-153 MB working set, 158-214 MB private; varies run to run).** Measure `hello`'s baseline; the
    offscreen scene + backdrop mip chain exist even without glass (allocate on first glass use); SDL's D3D12 staging
    and descriptor heaps; the fluid's own textures are ~40 MB.
-4. **Binary size (4.2 MB stripped).** Mostly static SDL3 with every subsystem: build it without audio, joystick,
+4. **Binary size (4.3 MB stripped).** Mostly static SDL3 with every subsystem: build it without audio, joystick,
    haptic, camera, sensor, hidapi and SDL_Renderer; `-Os`, LTO, `--gc-sections`. Target: under 1.5 MB.
 5. **Glass:** each glass command copies the whole frame and builds its mipmaps; copy only the region behind it and
    share one copy between non-overlapping groups.

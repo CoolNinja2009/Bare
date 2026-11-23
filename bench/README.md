@@ -57,7 +57,7 @@ Windows 11, Edge 158, MinGW GCC Release build. Ranges are over the clean runs.
 | Processes | 1 | 8-18 |
 | After the fluid settles | **0% CPU, 0% GPU** | unchanged: it never stops |
 | Launch to first frame | ~640 ms | ~720 ms |
-| Download | one 4.2 MB exe (static SDL3, stripped) | a browser |
+| Download | one 4.3 MB exe (static SDL3, stripped; 4.2 MB before text) | a browser |
 
 Edge unstirred measured 11-115% of a core (its fresh profile does background work); its GPU use
 matches the stirred run.
@@ -79,6 +79,13 @@ Bare's own setup (pipelines, fonts, first layout) and process launch add roughly
 
 ### History
 
+- M5 added text (shaping when declared, a wrap pass, glyph emit, one atlas upload per frame), stb_truetype,
+  stb_image and the 36 KB font; the fluid panel now has text labels (hidden while benchmarking, as before). Rerun
+  2026-11-23 (Bare side only): 7.35% of a core at 200 fps, 123 MB working set, 177 MB private, idle 0.06% CPU and
+  0% GPU: unchanged. Startup median 649 ms (634-662), unchanged. In the same run Edge started in 523-539 ms (one
+  792 ms outlier), faster than the ~720 ms measured before, so Edge now starts faster than Bare; see the startup
+  optimization in CLAUDE.md. The whole adapter read 62% 3D during that run, so something else was using the GPU;
+  Bare's own share (6.6%) matches the earlier runs. The stripped exe grew from 4.2 to 4.3 MB.
 - M4 added an animation pass over every element each frame. Rerun 2026-11-23 (Bare side only): 8.1% of a core,
   92 MB working set, 157 MB private, idle 0%: unchanged.
 

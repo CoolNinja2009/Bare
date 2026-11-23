@@ -11,11 +11,8 @@
  * Once the fluid has settled the app stops simulating and Bare sleeps, so it
  * costs no CPU or GPU until you touch it again; a browser keeps going forever.
  *
- * Panel (top right; colour dots stand in for labels until text lands in M5):
- *   bars:     dye quality, simulation resolution
- *   toggles:  shading, colourful, bloom, sunrays, pause
- *   sliders:  splat radius, vorticity, dye fade, velocity fade, pressure,
- *             bloom intensity, bloom threshold, sunray weight */
+ * The settings panel (top right) is frosted glass with text on it, as in the
+ * original's controls: quality bars, toggles and sliders. */
 #include "bare.h"
 #include "fluid_shaders.h"
 #include <math.h>
@@ -276,14 +273,17 @@ static BareColor dim(int a) { return BARE_RGBA(255, 255, 255, a); }
 
 static float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
-static void dot(BareColor c) { bare_box(.width = 10, .height = 10, .radius = 5, .color = c); }
+/* A label on the left of a line; the control fills the rest. */
+static void label(const char *text) {
+    bare_column(.width = 112) { bare_text(text, .size = 13); }
+}
 
 static bool toggle(bool on, BareColor accent) {
-    bare_row(.width = 40, .height = 22, .radius = 11, .padding = 3, .cursor = BARE_CURSOR_HAND,
+    bare_row(.width = 36, .height = 20, .radius = 10, .padding = 3, .cursor = BARE_CURSOR_HAND,
              .justify = on ? BARE_END : BARE_START, .color = on ? accent : dim(40),
              .hover = { .color = on ? accent : dim(70) }) {
         if (bare_this().clicked) on = !on;
-        bare_box(.width = 16, .height = 16, .radius = 8, .color = BARE_WHITE, .shadow = BARE_SHADOW_SMALL);
+        bare_box(.width = 14, .height = 14, .radius = 7, .color = BARE_WHITE, .shadow = BARE_SHADOW_SMALL);
     }
     return on;
 }
@@ -317,12 +317,21 @@ static int bars(int sel, BareColor accent) {
     return sel;
 }
 
-/* A line of the panel: a colour dot for a label, then a slider. */
-static void setting(float *v, float lo, float hi, BareColor color) {
-    bare_row(.width = BARE_GROW, .gap = 12, .align = BARE_CENTER) {
-        dot(color);
+/* A line of the panel: a label, then a slider. */
+static void setting(const char *name, float *v, float lo, float hi, BareColor color) {
+    bare_row(.width = BARE_GROW, .align = BARE_CENTER) {
+        label(name);
         *v = slider(*v, lo, hi, color);
     }
+}
+
+/* A label and a switch at the right end of the line. */
+static bool switch_line(const char *name, bool on, BareColor color) {
+    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
+        label(name);
+        on = toggle(on, color);
+    }
+    return on;
 }
 
 /* Returns true if anything changed. */
@@ -334,25 +343,32 @@ static bool panel(void) {
     memcpy(&old, &cfg, sizeof cfg);
 
     bare_row(.width = BARE_GROW, .justify = BARE_SPACE_BETWEEN, .align = BARE_CENTER) {
-        bare_row(.gap = 10, .align = BARE_CENTER) { dot(pink); cfg.quality = bars(cfg.quality, pink); }
-        bare_row(.gap = 10, .align = BARE_CENTER) { dot(cyan); cfg.sim_quality = bars(cfg.sim_quality, cyan); }
+        bare_text("Settings", .size = 16);
+        bare_text("Tab hides", .size = 12, .color = dim(110));
     }
-    bare_row(.width = BARE_GROW, .justify = BARE_SPACE_BETWEEN) {
-        cfg.shading = toggle(cfg.shading, sky);
-        cfg.colorful = toggle(cfg.colorful, pink);
-        cfg.bloom = toggle(cfg.bloom, amber);
-        cfg.sunrays = toggle(cfg.sunrays, gold);
-        cfg.paused = toggle(cfg.paused, red);
+    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
+        label("Quality");
+        cfg.quality = bars(cfg.quality, pink);
+    }
+    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
+        label("Sim resolution");
+        cfg.sim_quality = bars(cfg.sim_quality, cyan);
     }
     bare_box(.width = BARE_GROW, .height = 1, .color = dim(30));
-    setting(&cfg.splat_radius, 0.01f, 1, green);
-    setting(&cfg.curl, 0, 50, violet);
-    setting(&cfg.density_dissipation, 0, 4, pink);
-    setting(&cfg.velocity_dissipation, 0, 4, cyan);
-    setting(&cfg.pressure, 0, 1, sky);
-    setting(&cfg.bloom_intensity, 0.1f, 2, amber);
-    setting(&cfg.bloom_threshold, 0, 1, amber);
-    setting(&cfg.sunrays_weight, 0.3f, 1, gold);
+    cfg.shading = switch_line("Shading", cfg.shading, sky);
+    cfg.colorful = switch_line("Colorful", cfg.colorful, pink);
+    cfg.bloom = switch_line("Bloom", cfg.bloom, amber);
+    cfg.sunrays = switch_line("Sunrays", cfg.sunrays, gold);
+    cfg.paused = switch_line("Paused (P)", cfg.paused, red);
+    bare_box(.width = BARE_GROW, .height = 1, .color = dim(30));
+    setting("Splat radius", &cfg.splat_radius, 0.01f, 1, green);
+    setting("Vorticity", &cfg.curl, 0, 50, violet);
+    setting("Density fade", &cfg.density_dissipation, 0, 4, pink);
+    setting("Velocity fade", &cfg.velocity_dissipation, 0, 4, cyan);
+    setting("Pressure", &cfg.pressure, 0, 1, sky);
+    setting("Bloom intensity", &cfg.bloom_intensity, 0.1f, 2, amber);
+    setting("Bloom threshold", &cfg.bloom_threshold, 0, 1, amber);
+    setting("Sunray weight", &cfg.sunrays_weight, 0.3f, 1, gold);
     return memcmp(&old, &cfg, sizeof cfg) != 0;
 }
 
@@ -424,8 +440,9 @@ int main(void) {
                     hamburger();
                 }
                 if (show_panel) {
-                    bare_column(.width = 300, .padding = 20, .gap = 14, .radius = 24,
-                                .glass = BARE_GLASS_FROSTED, .color = BARE_RGBA(16, 18, 26, 90)) {
+                    bare_column(.width = 300, .padding = 20, .gap = 10, .radius = 24,
+                                .glass = BARE_GLASS_FROSTED, .color = BARE_RGBA(16, 18, 26, 90),
+                                .text_color = BARE_RGBA(255, 255, 255, 225)) {
                         if (panel()) dirty = true;
                     }
                 }

@@ -1,7 +1,7 @@
 /*
  * bare.h: the whole public API of Bare, a small native UI framework in C11.
  *
- * Parts marked (M5)...(M9) aren't implemented yet; see docs/ROADMAP.md.
+ * Parts marked (M6)...(M9) aren't implemented yet; see docs/ROADMAP.md.
  *
  * The simplest program:
  *
@@ -243,15 +243,15 @@ typedef struct BareAnim {
 #define BARE_SPRING_BOUNCY  BARE_SPRING(0.45f, 0.55f)   /* playful wobble */
 
 /* ------------------------------------------------------------------------ */
-/* Fonts and images (M5)                                                    */
+/* Fonts and images                                                         */
 /* ------------------------------------------------------------------------ */
 
 typedef uint32_t BareFont;    /* 0 = the built-in default font */
 typedef uint32_t BareImage;   /* 0 = no image */
 
-BareFont  bare_font_load(const char *path);                       /* TTF/OTF; 0 on failure */
+BareFont  bare_font_load(const char *path);                       /* TTF/OTF; 0 (the default font) on failure */
 BareFont  bare_font_from_memory(const void *data, int size);      /* data must outlive the font */
-BareImage bare_image_load(const char *path);                      /* (M5) PNG/JPG; 0 on failure */
+BareImage bare_image_load(const char *path);                      /* PNG, JPEG, BMP, GIF, TGA; 0 on failure */
 BareImage bare_image_from_pixels(int width, int height, const void *rgba8);  /* pixels are copied */
 void      bare_image_free(BareImage image);                       /* images and canvases */
 BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
@@ -356,7 +356,7 @@ typedef struct BareBox {
     BareVec2 offset;            /* visual move in pixels, children included; doesn't affect layout.
                                    Not snapped to whole pixels, so slow motion stays smooth */
     BareGlass glass;            /* liquid glass (see BareGlass) */
-    BareColor text_color;       /* inherited by text inside; alpha 0 = inherit */
+    BareColor text_color;       /* inherited by text inside; alpha 0 = inherit (white at the top) */
     BareImage image;            /* drawn over .color, stretched to the box, rounded by .radius */
 
     /* interaction */
@@ -375,10 +375,10 @@ typedef struct BareTextStyle {
     BareId id;
     BareFont font;              /* 0 = default */
     float size;                 /* 0 = default 16 */
-    BareColor color;            /* alpha 0 = inherited from the nearest .text_color */
+    BareColor color;            /* alpha 0 = inherited from the nearest .text_color (default white) */
     float line_height;          /* multiple of size; 0 = default 1.3 */
     BareAlign align;            /* BARE_START / CENTER / END within the line box */
-    bool nowrap;                /* default: wraps at the available width */
+    bool nowrap;                /* default: wraps at spaces and after hyphens to fit its width */
 } BareTextStyle;
 
 /* What happened to an element. Results reflect input up to the start of this
@@ -403,7 +403,9 @@ typedef struct BareState {
 /* State of the innermost open container (call inside its block). */
 BareState bare_this(void);
 
-/* Text (M5; until then layout uses a stand-in measurer). */
+/* Text: a leaf element as wide as its longest line, but no wider than its
+ * parent allows (then it wraps; a row shrinks it down to its longest word).
+ * The default font is Inter (Latin); pass .font = bare_font_load(...) for others. */
 #define bare_text(str, ...)  bare_text_((str), &(BareTextStyle){ __VA_ARGS__ }, __FILE__, __LINE__)
 #define bare_textf(...)      bare_textf_(__FILE__, __LINE__, __VA_ARGS__)   /* printf-style, default style */
 

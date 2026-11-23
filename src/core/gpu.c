@@ -83,7 +83,7 @@ void bare__gpu_free(BareContext *ctx) {
 const BareImageRec *bare__image(const BareContext *ctx, BareImage id) {
     if (!ctx || id == 0 || (int)id > ctx->image_count) return NULL;
     const BareImageRec *r = &ctx->images[id - 1];
-    return r->alive ? r : NULL;
+    return r->alive && !r->internal ? r : NULL;
 }
 
 static BareImage new_image(BareContext *ctx, int w, int h, BareFormat format, bool canvas) {
@@ -105,6 +105,13 @@ static BareImage new_image(BareContext *ctx, int w, int h, BareFormat format, bo
     r->canvas = canvas;
     r->alive = true;
     return (BareImage)(index + 1);
+}
+
+/* The renderer creates it from the core's uploads; no ops. */
+uint32_t bare__image_reserve(BareContext *ctx, int w, int h) {
+    BareImage id = new_image(ctx, w, h, BARE_RGBA8, false);
+    if (id) ctx->images[id - 1].internal = true;
+    return id;
 }
 
 static bool valid_size(BareContext *ctx, const char *what, int w, int h) {

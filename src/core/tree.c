@@ -3,6 +3,8 @@
  * backwards visits children before parents. */
 #include "internal.h"
 #include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 /* 0 means "default"; BARE_ZERO (-0.0f) means a real zero. */
@@ -195,6 +197,44 @@ BareState bare_box_(const BareBox *box, const char *file, int line) {
     if (!ctx) { BareState s; memset(&s, 0, sizeof s); return s; }
     int i = bare__tree_push(ctx, box, file, line);
     return state_of(ctx, i);
+}
+
+/* Text is a leaf element sized by its content; its colour comes from the
+ * nearest .text_color unless the style sets one (emit.c). */
+static BareState push_text(BareContext *ctx, const char *str, int len, const BareTextStyle *style,
+                           const char *file, int line) {
+    BareBox box;
+    memset(&box, 0, sizeof box);
+    box.id = style->id;
+    box.text_color = style->color;
+    int i = bare__tree_push(ctx, &box, file, line);
+    if (i >= 0) ctx->elems[i].text = bare__text_new(ctx, str, len, style);
+    return state_of(ctx, i);
+}
+
+BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line) {
+    BareContext *ctx = need_frame("bare_text", file, line);
+    if (!ctx) { BareState s; memset(&s, 0, sizeof s); return s; }
+    if (!text) text = "";
+    return push_text(ctx, text, (int)strlen(text), style, file, line);
+}
+
+BareState bare_textf_(const char *file, int line, const char *fmt, ...) {
+    BareContext *ctx = need_frame("bare_textf", file, line);
+    BareState none;
+    memset(&none, 0, sizeof none);
+    if (!ctx || !fmt) return none;
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    char *buf = n >= 0 ? bare__arena_alloc(&ctx->frame, (size_t)n + 1, 1) : NULL;
+    if (buf) vsnprintf(buf, (size_t)n + 1, fmt, ap2);
+    va_end(ap2);
+    BareTextStyle style;
+    memset(&style, 0, sizeof style);
+    return push_text(ctx, buf ? buf : "", buf ? n : 0, &style, file, line);
 }
 
 int bare_open_(const BareBox *box, const char *file, int line) {

@@ -28,7 +28,8 @@ simulation with a frosted settings panel built from Bare boxes.
 ## Status
 
 Early. Done: GPU renderer (SDL3), rounded boxes, borders and shadows, liquid glass, flexbox layout, hover / press /
-click / keys, canvases and custom shaders. Next: animation, text. See [docs/ROADMAP.md](docs/ROADMAP.md).
+click / keys, canvases and custom shaders, animation (easing and springs), text (wrapped, kerned, sharp at any DPI,
+with a built-in font) and images. Next: clipping and scrolling. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Measured against the same fluid simulation running in Microsoft Edge, both at 200 fps
 ([bench/README.md](bench/README.md)): about 3x less CPU, 4-5x less memory, 1 process instead of 8-18, and 0% CPU and

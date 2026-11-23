@@ -1,8 +1,9 @@
-foreach(name hello shapes glass layout buttons cards)
+foreach(name hello shapes glass layout buttons cards text)
     add_executable(${name} ${name}.c)
     target_link_libraries(${name} PRIVATE bare)
     target_compile_options(${name} PRIVATE ${BARE_WARNINGS})
 endforeach()
+target_compile_definitions(text PRIVATE ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets/")
 
 # Fluids: a GPU fluid simulation on canvases, with its own shaders.
 add_executable(fluid fluid/fluid.c)

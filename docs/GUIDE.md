@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (M3, plus canvases) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M5: text and images) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -10,15 +10,16 @@ How to build UIs with Bare, for people who know HTML and CSS. Everything here wo
 4. [Rows, columns and stacks](#4-rows-columns-and-stacks)
 5. [Sizes](#5-sizes)
 6. [Spacing and alignment](#6-spacing-and-alignment)
-7. [Components are functions](#7-components-are-functions)
-8. [Lists and IDs](#8-lists-and-ids)
-9. [Clicks, hover and keys](#9-clicks-hover-and-keys)
-10. [Movement](#10-movement)
-11. [Liquid glass](#11-liquid-glass)
-12. [Canvases and your own shaders](#12-canvases-and-your-own-shaders)
-13. [CSS to Bare cheat sheet](#13-css-to-bare-cheat-sheet)
-14. [Debugging](#14-debugging)
-15. [What's next](#15-whats-next)
+7. [Text and images](#7-text-and-images)
+8. [Components are functions](#8-components-are-functions)
+9. [Lists and IDs](#9-lists-and-ids)
+10. [Clicks, hover and keys](#10-clicks-hover-and-keys)
+11. [Movement](#11-movement)
+12. [Liquid glass](#12-liquid-glass)
+13. [Canvases and your own shaders](#13-canvases-and-your-own-shaders)
+14. [CSS to Bare cheat sheet](#14-css-to-bare-cheat-sheet)
+15. [Debugging](#15-debugging)
+16. [What's next](#16-whats-next)
 
 ---
 
@@ -207,7 +208,54 @@ bare_row(.width = BARE_GROW, .align = BARE_CENTER) {
 
 There's no `margin` yet *(coming in M10)*: use the parent's `.gap` and `.padding`, or a spacer.
 
-## 7. Components are functions
+## 7. Text and images
+
+```c
+bare_text("Hello");                                          /* 16 px, Inter, white */
+bare_text("Big and blue", .size = 32, .color = BARE_RGB(90, 140, 255));
+bare_textf("Clicked %d times", clicks);                      /* printf-style */
+```
+
+Text is an element like a box. It's as wide as its longest line, but no wider than its parent lets it be: then it
+wraps, at spaces and after hyphens (a word longer than the line breaks where it must). In a row it shrinks down to
+its longest word before anything overflows, like inline text in a flex item. `
+` starts a new line.
+
+- `.size` (default 16), `.line_height` (a multiple of the size, default 1.3), `.font`, `.color`.
+- `.align = BARE_CENTER` or `BARE_END` aligns each wrapped line inside the text's box. Give the text the width to
+  align in: `.align = BARE_STRETCH` on a column, or a parent of fixed width.
+- `.nowrap = true` keeps it on one line.
+- **Colour is inherited**, like CSS `color`: set `.text_color` on any container and the text inside takes it, unless
+  the text sets its own `.color`. `.hover = { .text_color = ... }` works, and `.animate` fades it.
+- Strings are UTF-8 and copied, so a temporary buffer is fine.
+
+```c
+bare_column(.width = 320, .gap = 6, .text_color = BARE_RGB(200, 205, 220)) {
+    bare_text("Sunset Hills", .size = 22, .color = BARE_WHITE);
+    bare_text("Wraps at 320 px; inherits its colour from the column.");
+}
+```
+
+**Fonts.** The default font is Inter (Latin and common symbols), built in, so text works with no setup. Load others
+with `BareFont f = bare_font_load("fonts/Display.ttf");` once, then `.font = f`. `bare_font_from_memory(data, size)`
+uses a font you've embedded (the data must stay alive). Text is rasterized at the screen's real pixel size, so it's
+sharp at 150% and 200%. Bold and italic need their own font files for now *(weights, letter spacing, underline and
+ellipsis are coming in M10)*.
+
+**Images.** `bare_image_load("photo.png")` (PNG, JPEG, BMP, GIF's first frame, TGA) once, then show it with `.image`
+on any box. It stretches to the box and is cut to its `.radius`, so a round avatar is:
+
+```c
+BareImage avatar = bare_image_load("avatar.png");            /* before the loop */
+...
+bare_box(.width = 96, .height = 96, .radius = 48, .image = avatar);
+```
+
+`bare_image_size(img)` gives its pixel size (for an aspect ratio), `bare_image_from_pixels(w, h, rgba)` makes one
+from memory, and `bare_image_free(img)` frees it. `examples/text.c` shows all of this, plus a liquid glass loupe that
+magnifies the text under the mouse.
+
+## 8. Components are functions
 
 A "component" is a C function that declares elements. Parameters are its props:
 
@@ -216,7 +264,7 @@ static void stat_card(const char *label, BareColor accent) {
     bare_column(.width = BARE_GROW, .padding = 20, .gap = 12, .radius = 16,
                 .color = BARE_RGB(31, 35, 46), .shadow = BARE_SHADOW_SOFT) {
         bare_box(.width = 28, .height = 28, .radius = 8, .color = accent);
-        /* bare_text(label, .size = 20);   (coming in M5) */
+        bare_text(label, .size = 20);
     }
 }
 
@@ -229,7 +277,7 @@ bare_row(.width = BARE_GROW, .gap = 20) {
 No classes, no framework: call it in a loop, pass it state, return values from it. Reusable looks like CSS classes
 (`.style = &card_style`) are *(coming in M7)*.
 
-## 8. Lists and IDs
+## 9. Lists and IDs
 
 Bare gives every element an ID so it can remember things about it between frames (where it was, whether it's hovered,
 its animations). It works them out from where in your code the element was declared, which is enough for most UIs,
@@ -247,7 +295,7 @@ bare_box(.id = BARE_ID("save"), ...);                       /* a one-off name */
 
 Using one ID twice in a frame is a mistake; Bare logs it with both file:line locations and keeps going.
 
-## 9. Clicks, hover and keys
+## 10. Clicks, hover and keys
 
 Every element call returns a `BareState`: what happened to it. There are no callbacks or event listeners. You ask:
 
@@ -305,7 +353,7 @@ if (bare_key_down(BARE_KEY_CTRL) && bare_key_pressed(BARE_KEY_S)) save();
 
 `bare_mouse()` is the mouse position. Typing text into fields is later (text input is its own milestone).
 
-## 10. Movement
+## 11. Movement
 
 Set the new value and say how to get there; Bare animates to it:
 
@@ -361,7 +409,7 @@ while (bare_frame()) {
 
 Turn `bare_continuous` off again when nothing moves, so the app goes back to using no CPU.
 
-## 11. Liquid glass
+## 12. Liquid glass
 
 Glass bends and frosts whatever was drawn **before** it (behind it):
 
@@ -413,7 +461,7 @@ bare_box(.width = 90, .height = 90, .radius = 45, .glass = { .merge = 50 }, .off
 Glass is the most expensive thing Bare draws (each glass group copies the screen), so use it for a few hero elements,
 not for every list row. `examples/glass.c` and `examples/glass_motion/` are the showcases.
 
-## 12. Canvases and your own shaders
+## 13. Canvases and your own shaders
 
 What `<canvas>` and WebGL are to a web page. A **canvas** is an image your shaders draw into; a **pass** runs a
 fragment shader once for every pixel of a canvas. Show a canvas with `.image` like any picture, or feed it into the
@@ -466,7 +514,7 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
 `examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes with a settings panel made of Bare boxes,
 and `bench/` measures it against the same simulation running in Edge.
 
-## 13. CSS to Bare cheat sheet
+## 14. CSS to Bare cheat sheet
 
 | CSS / HTML / JS | Bare |
 |---|---|
@@ -503,12 +551,17 @@ and `bench/` measures it against the same simulation running in Edge.
 | `keydown` | `bare_key_pressed(BARE_KEY_ENTER)` |
 | `transition: all .3s ease-out` | `.animate = BARE_EASE(0.3f, BARE_EASE_OUT)` |
 | FLIP animations of layout changes | `.animate_layout = BARE_SPRING_SMOOTH` and stable ids |
-| text | `bare_text("Hello", .size = 20)` *(M5)* |
+| text, `font-size`, `color`, `line-height` | `bare_text("Hello", .size = 20, .color = ..., .line_height = 1.5f)` |
+| `color` on a parent (inherited) | `.text_color = ...` on the container |
+| `text-align: center` | `.align = BARE_CENTER` on the text |
+| `white-space: nowrap` | `.nowrap = true` |
+| `@font-face` | `bare_font_load("x.ttf")`, then `.font = f` |
+| `<img src="a.png">`, `border-radius: 50%` | `.image = bare_image_load("a.png")`, `.radius = size / 2` |
 | `overflow: auto` | `.scroll = ...` *(M6)* |
 | `class="card"` | `.style = &card` *(M7)* |
 | `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
 
-## 14. Debugging
+## 15. Debugging
 
 - **Mistakes are logged, not crashes:** unclosed containers and duplicate IDs print a message with the file and line
   to stderr.
@@ -525,8 +578,8 @@ and `bench/` measures it against the same simulation running in Edge.
   (`bare_ctx_create`, `bare_ctx_begin`, `bare_ctx_end`), which returns the list of draw commands. Bare's own tests in
   `tests/` work this way; your app's layout can be tested the same way.
 
-## 15. What's next
+## 16. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): text and images (M5), scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `glass_motion/` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `glass_motion/` and `fluid/` today.

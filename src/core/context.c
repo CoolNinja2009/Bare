@@ -29,6 +29,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
         if (config->allocator.alloc) alloc = config->allocator;
         block = config->frame_arena_block;
     }
+    const BareFontBackend *fonts = config ? config->fonts : NULL;
     BareContext *ctx = bare__alloc(&alloc, sizeof *ctx);
     if (!ctx) return NULL;
     memset(ctx, 0, sizeof *ctx);
@@ -36,6 +37,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     bare__arena_init(&ctx->frame, alloc, block);
     ctx->store.free_head = -1;
     ctx->anim_free = -1;
+    ctx->font_backend = fonts;
     ctx->clear = BARE_RGB(24, 24, 28);
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
@@ -48,6 +50,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     bare__arena_free(&ctx->frame);
     bare__store_free(ctx);
     bare__anim_free(ctx);
+    bare__text_free(ctx);
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
     bare__free(&ctx->alloc, ctx->hits, (size_t)ctx->hit_cap * sizeof *ctx->hits);
@@ -102,7 +105,9 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
         const BareElem *e = &ctx->elems[i];
         if (e->node >= 0) ctx->store.nodes[e->node].rect = bare__visual_rect(e);
     }
-    if ((bare__input_end(ctx) || ctx->anim_active) && still_animating) *still_animating = true;
+    bool more = bare__input_end(ctx) || ctx->anim_active || ctx->text_redraw;
+    ctx->text_redraw = false;
+    if (more && still_animating) *still_animating = true;
     bare__store_evict(ctx, ctx->frame_index);
     ctx->in_frame = false;
     ctx->frame_index++;

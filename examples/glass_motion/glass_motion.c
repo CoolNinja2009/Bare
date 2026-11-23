@@ -12,8 +12,8 @@
  *      checkerboard rolls in behind it to show the tinted glass bending it
  *   5. a switch whose knob turns to glass while held and slides back and forth
  *
- * Backdrops are the example's own shaders (shaders/). Text arrives in M5:
- * bars stand in for labels. `glass_motion 4.6` starts 4.6 s into the loop. */
+ * Backdrops are the example's own shaders (shaders/); the labels are text
+ * drawn on the glass. `glass_motion 4.6` starts 4.6 s into the loop. */
 #include "bare.h"
 #include "glass_motion_shaders.h"
 #include <math.h>
@@ -58,7 +58,7 @@ static void capsule_scene(BareImage petals, float t) {
                  .glass = { .refraction = 1.0f, .depth = 0.07f * W, .blur = 1.5f, .shine = 1.4f,
                             .light = (t - 1.5f) * 70.0f - 40.0f, .tint = { 255, 255, 255, 18 } }) {
             bare_box(.width = 0.09f * W, .height = 0.09f * W, .image = play_icon);
-            bare_box(.width = 0.24f * W, .height = 0.075f * W, .radius = 0.02f * W, .color = BARE_RGBA(255, 255, 255, 235));
+            bare_text("Play", .size = 0.085f * W, .color = BARE_RGBA(255, 255, 255, 240));
         }
     }
 }
@@ -124,9 +124,10 @@ static void wheel_scene(BareImage wheel, float t) {
             if (button) {
                 bare_box(.id = BARE_ID("add.icon"), .width = 0.07f * W, .height = 0.07f * W, .image = plus_icon,
                          .opacity = label ? 1.0f : BARE_ZERO, .animate = BARE_EASE(0.2f, BARE_EASE_OUT));
-                bare_box(.id = BARE_ID("add.text"), .width = 0.18f * W, .height = 0.065f * W, .radius = 0.018f * W,
-                         .color = BARE_RGBA(255, 255, 255, 240), .opacity = label ? 1.0f : BARE_ZERO,
-                         .animate = BARE_EASE(0.2f, BARE_EASE_OUT));
+                bare_column(.id = BARE_ID("add.text"), .opacity = label ? 1.0f : BARE_ZERO,
+                            .animate = BARE_EASE(0.2f, BARE_EASE_OUT)) {
+                    bare_text("Add", .size = 0.08f * W, .color = BARE_RGBA(255, 255, 255, 245));
+                }
             }
         }
     }

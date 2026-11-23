@@ -157,7 +157,7 @@ typedef struct BareGpuOp {
 
 typedef struct BareDrawList {
     const BareGpuOp         *ops;      int op_count;       /* first, in order */
-    const BareTextureUpload *uploads;  int upload_count;   /* then these (glyph atlas, M5) */
+    const BareTextureUpload *uploads;  int upload_count;   /* then these (the glyph atlas) */
     const BareDrawCmd       *cmds;     int cmd_count;
     int        width, height;          /* framebuffer, physical pixels */
     float      scale;                  /* physical / logical */
@@ -202,9 +202,44 @@ typedef struct BareEvent {
     } as;
 } BareEvent;
 
+/* ------------------------------------------------------------------------ */
+/* Fonts: loading, shaping and rasterizing (ARCHITECTURE §13)               */
+/* ------------------------------------------------------------------------ */
+
+/* The default backend is stb_truetype. The interface is shaped so FreeType +
+ * HarfBuzz can replace it without touching layout or emit; tests pass a fake. */
+typedef struct BareShapedGlyph {
+    uint32_t glyph;
+    float    advance;              /* pixels at the size shaped, kerning with the next glyph included */
+    float    x_offset, y_offset;
+    uint32_t cluster;              /* byte offset of its first character in the text */
+} BareShapedGlyph;
+
+typedef struct BareGlyphBitmap {
+    int width, height;             /* 0 for blank glyphs (space) */
+    int left, top;                 /* top-left corner relative to the pen on the baseline (y down) */
+    const unsigned char *pixels;   /* R8 coverage, `stride` bytes per row; valid until the next call */
+    int stride;
+} BareGlyphBitmap;
+
+typedef struct BareFontBackend {
+    void *(*load)(const BareAllocator *alloc, const void *data, int size);    /* NULL on failure */
+    /* ascent and descent are distances above and below the baseline (both >= 0). */
+    void  (*metrics)(void *font, float px, float *ascent, float *descent, float *line_gap);
+    /* Writes at most `cap` glyphs (cap >= len) and returns how many. */
+    int   (*shape)(void *font, float px, const char *utf8, int len, BareShapedGlyph *out, int cap);
+    /* shift_x: sub-pixel offset 0..1 of the pen. */
+    bool  (*rasterize)(void *font, uint32_t glyph, float px, float shift_x, BareGlyphBitmap *out);
+    void  (*unload)(void *font);
+} BareFontBackend;
+
+/* stb_truetype, the default. */
+const BareFontBackend *bare_font_backend_stb(void);
+
 typedef struct BareConfig {
     BareAllocator allocator;       /* zero = libc */
     size_t frame_arena_block;      /* zero = 256 KB */
+    const BareFontBackend *fonts;  /* NULL = stb_truetype */
 } BareConfig;
 
 BareContext *bare_ctx_create(const BareConfig *config);   /* config may be NULL */
