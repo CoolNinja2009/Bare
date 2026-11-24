@@ -275,6 +275,9 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *event);
 /* The mouse cursor the UI asks for (the hovered element's .cursor), valid
  * after bare_ctx_end. */
 BareCursor bare_ctx_cursor(const BareContext *ctx);
+/* Whether a point (logical pixels) is in a .window_drag area of the last
+ * frame, with nothing that reacts to the mouse over it. */
+bool bare_ctx_window_drag(const BareContext *ctx, BareVec2 p);
 
 /* When nothing is animating the caller may sleep until input arrives, but no
  * later than this time (on the clock passed to bare_ctx_begin): something is

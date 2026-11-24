@@ -340,6 +340,27 @@ TEST(another_frame_when_the_ui_moves_under_a_still_mouse) {
     reset();
 }
 
+/* A title bar marked .window_drag: its empty space drags the window, a button on it doesn't,
+ * and neither does anything outside it. */
+TEST(window_drag_areas_skip_what_reacts_to_the_mouse) {
+    for (int frame = 0; frame < 2; frame++) {
+        begin();
+        bare_column() {
+            bare_row(.id = BARE_ID("bar"), .width = 400, .height = 40, .window_drag = true) {
+                bare_box(.id = BARE_ID("label"), .width = 100, .height = 40);
+                bare_box(.id = BARE_ID("close"), .width = 40, .height = 40, .hover = { .opacity = 0.5f });
+            }
+            bare_box(.id = BARE_ID("page"), .width = 400, .height = 200);
+        }
+        end();
+    }
+    CHECK(bare_ctx_window_drag(ctx, (BareVec2){ 250, 20 }));    /* the bar itself */
+    CHECK(bare_ctx_window_drag(ctx, (BareVec2){ 50, 20 }));     /* a plain child of it */
+    CHECK(!bare_ctx_window_drag(ctx, (BareVec2){ 120, 20 }));   /* a child with a hover look */
+    CHECK(!bare_ctx_window_drag(ctx, (BareVec2){ 200, 100 }));  /* outside the bar */
+    reset();
+}
+
 int main(void) {
     RUN(nothing_is_hovered_before_anything_was_drawn);
     RUN(hover_picks_the_topmost_and_its_ancestors);
@@ -359,5 +380,6 @@ int main(void) {
     RUN(keys_pressed_for_one_frame);
     RUN(losing_focus_releases_keys_and_buttons);
     RUN(another_frame_when_the_ui_moves_under_a_still_mouse);
+    RUN(window_drag_areas_skip_what_reacts_to_the_mouse);
     return test_report();
 }

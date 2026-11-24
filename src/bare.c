@@ -27,16 +27,24 @@ static struct {
     BareId        chosen_id;          /* a file dialog's answer, shown for one frame */
     char          chosen[4096];
     int           chosen_frames;
+    BareImage     backdrop;           /* bare_window_backdrop's image */
+    int           backdrop_w, backdrop_h;
 } app;
 
 static const char *clip_get(void *user) { (void)user; return app.platform.clipboard_get(app.platform.self); }
 static void clip_set(void *user, const char *text) { (void)user; app.platform.clipboard_set(app.platform.self, text); }
 
-static bool window_open(int width, int height, const char *title, bool transparent) {
+static int drag_query(void *user, float x, float y) {
+    (void)user;
+    return app.ctx && bare_ctx_window_drag(app.ctx, (BareVec2){ x, y });
+}
+
+static bool window_open(int width, int height, const char *title, unsigned flags) {
     if (app.open) return true;
     app.platform = bare__sdl3_platform();
     app.renderer = bare__sdl3gpu_renderer();
-    if (!app.platform.open_window(app.platform.self, width, height, title, transparent)) return false;
+    if (!app.platform.open_window(app.platform.self, width, height, title, flags)) return false;
+    if (app.platform.set_drag_query) app.platform.set_drag_query(app.platform.self, drag_query, NULL);
     if (!app.renderer.init(app.renderer.self, &app.platform)) {
         app.platform.close_window(app.platform.self);
         return false;
@@ -68,11 +76,42 @@ static bool window_open(int width, int height, const char *title, bool transpare
 }
 
 bool bare_window(int width, int height, const char *title) {
-    return window_open(width, height, title, false);
+    return window_open(width, height, title, 0);
 }
 
 bool bare_window_transparent(int width, int height, const char *title) {
-    return window_open(width, height, title, true);
+    return window_open(width, height, title, BARE_WINDOW_TRANSPARENT);
+}
+
+bool bare_window_with_(const BareWindowOptions *o) {
+    unsigned flags = (o->transparent ? BARE_WINDOW_TRANSPARENT : 0) | (o->frameless ? BARE_WINDOW_FRAMELESS : 0);
+    if (!window_open(o->width > 0 ? o->width : 1280, o->height > 0 ? o->height : 800, o->title, flags)) return false;
+    if ((o->min_width > 0 || o->min_height > 0) && app.platform.set_min_size)
+        app.platform.set_min_size(app.platform.self, o->min_width, o->min_height);
+    return true;
+}
+
+void bare_window_minimize(void) { if (app.open && app.platform.minimize) app.platform.minimize(app.platform.self); }
+void bare_window_maximize(void) { if (app.open && app.platform.maximize) app.platform.maximize(app.platform.self); }
+bool bare_window_maximized(void) {
+    return app.open && app.platform.maximized && app.platform.maximized(app.platform.self);
+}
+void bare_window_close(void) { app.quit = true; if (app.open) app.platform.wake(app.platform.self); }
+
+BareImage bare_window_backdrop(void) {
+    if (!app.open || !app.platform.backdrop) return 0;
+    int w = 0, h = 0;
+    const void *pixels = app.platform.backdrop(app.platform.self, &w, &h);
+    if (pixels && w > 0 && h > 0) {
+        if (app.backdrop && (w != app.backdrop_w || h != app.backdrop_h)) {
+            bare_image_free(app.backdrop);
+            app.backdrop = 0;
+        }
+        if (app.backdrop) bare_image_update(app.backdrop, pixels);
+        else app.backdrop = bare_image_from_pixels(w, h, pixels);
+        app.backdrop_w = w, app.backdrop_h = h;
+    }
+    return app.backdrop;
 }
 
 static bool is_input(BareEventKind k) {

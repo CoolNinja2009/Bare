@@ -343,6 +343,7 @@ typedef struct BareHit {
     uint8_t  scroll;            /* BareScroll */
     uint8_t  bar;               /* 1 / 2: the x / y scrollbar rail of its parent */
     uint8_t  focus;             /* BARE__FOCUS_* */
+    uint8_t  drag;              /* 1: .window_drag; 2: reacts to the mouse (keeps clicks in a drag area) */
 } BareHit;
 
 enum { BARE__FOCUS_ABLE = 1, BARE__FOCUS_FIELD = 2, BARE__FOCUS_TABS = 4, BARE__FOCUS_LINE = 8,

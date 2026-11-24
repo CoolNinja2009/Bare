@@ -47,6 +47,11 @@ void bare__hits_build(BareContext *ctx) {
         h->scroll = (uint8_t)e->box.scroll;
         h->bar = e->overlay;
         h->focus = e->focus;
+        const BareLook *hv = &e->box.hover, *pr = &e->box.press;
+        bool reacts = e->box.cursor || e->box.focusable || e->focus || e->box.scroll ||
+                      hv->color.a || hv->scale || hv->opacity || hv->border_color.a || hv->offset.x || hv->offset.y ||
+                      pr->color.a || pr->scale || pr->opacity || pr->offset.x || pr->offset.y;
+        h->drag = e->box.window_drag ? 1 : reacts ? 2 : 0;
         /* Children of a clipping or scrolling box can't be hit outside it (inside its border). */
         if (e->parent < 0) {
             h->clip = everything;
@@ -81,6 +86,17 @@ int bare__hit_find(const BareContext *ctx, BareVec2 p) {
         if (inside_rounded(h->rect, h->radius, p)) return i;
     }
     return -1;
+}
+
+/* Is the point in a .window_drag area, with nothing that takes clicks in the way? */
+bool bare_ctx_window_drag(const BareContext *ctx, BareVec2 p) {
+    if (!ctx) return false;
+    int i = bare__hit_find(ctx, p);
+    for (; i >= 0; i = ctx->hits[i].parent) {
+        if (ctx->hits[i].drag == 1) return true;
+        if (ctx->hits[i].drag == 2) return false;
+    }
+    return false;
 }
 
 void bare__hit_chain(const BareContext *ctx, int index, BareChain *out) {

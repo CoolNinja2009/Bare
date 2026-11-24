@@ -150,6 +150,12 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 
 ## Current status
 
+**2026-11-25:** frameless windows (`bare_window_with`, `.window_drag`, `bare_window_minimize/maximize/close`) and
+`bare_window_backdrop()` (Windows: the live desktop behind the window by DXGI Desktop Duplication on a worker thread,
+the window excluded from capture with `WDA_EXCLUDEFROMCAPTURE`; `src/backend/backdrop_win32.c`), so glass bends what's
+really behind the window. `bare_image_update`. Glass now copies only the region it bends (`blit_region`). Screen+'s
+Bare window (`Wallpaper+/ScreenPlus/src/ui_bare`) is the first user. Not done: macOS/Linux backdrops (they return 0).
+
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
 (animation), M5 (text and images), M6 (clipping and scrolling), M7 (style system), M7.5 (BareType: focus, fields,
 rich text, the editor) and M8 (widgets) done, plus `examples/write/` (a Markdown / txt editor on liquid glass).**

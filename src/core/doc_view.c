@@ -696,7 +696,7 @@ static void draw_lines(View *w, BareNode *node, bool focused, float vis_h, const
         on = ((long)phase % 2) == 0;
         bare__want_frame_at(ctx, v->blink + (phase + 1) * BLINK);
     }
-    BareTextPos br[2];
+    BareTextPos br[2] = { { 0, 0 }, { 0, 0 } };   /* set only with has_br; zeroed for GCC -O3 */
     const BareSel *m = &d->sels[d->main];
     bool has_br = d->sel_count == 1 && !bare__pos_cmp(m->anchor, m->caret) && bracket_match(d, m->caret, &br[0], &br[1]);
 

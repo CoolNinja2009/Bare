@@ -699,8 +699,30 @@ bare_box(.width = 300, .height = 90, .radius = 45, .glass = { .merge = 50 }, .of
 bare_box(.width = 90, .height = 90, .radius = 45, .glass = { .merge = 50 }, .offset = { x2, y2 });
 ```
 
-Glass is the most expensive thing Bare draws (each glass group copies the screen), so use it for a few hero elements,
-not for every list row. `examples/glass.c` and `examples/glass_motion/` are the showcases.
+Glass is the most expensive thing Bare draws (each glass group copies the region it bends), so use it for a few hero
+elements, not for every list row. `examples/glass.c` and `examples/glass_motion/` are the showcases.
+
+**A window of glass (Windows):** `bare_window_backdrop()` is the live desktop behind the window, as an image the size
+of the window that updates by itself. Draw it first, behind everything, and every `.glass` above it bends what is
+really behind the window rather than a blur of it. Pair it with a frameless window and your own title bar:
+
+```c
+bare_window_with(.width = 1200, .height = 800, .title = "Notes", .frameless = true, .min_width = 640, .min_height = 420);
+while (bare_frame()) {
+    BareVec2 size = bare_window_size();
+    bare_stack(.width = size.x, .height = size.y, .image = bare_window_backdrop()) {
+        bare_row(.width = BARE_GROW, .height = 44, .window_drag = true) {   /* drags the window */
+            bare_box(.width = BARE_GROW);
+            if (bare_button("x").clicked) bare_window_close();            /* buttons stay clickable */
+        }
+        /* ... glass panels ... */
+    }
+}
+```
+
+The window is left out of screenshots and screen sharing while the backdrop is on (that's how it can see what's
+behind itself), and it returns 0 where it isn't available (other systems, Windows before 10 2004): draw a background
+of your own then. `bare_image_update` refreshes any image of the same size from new pixels in the same way.
 
 ## 13. Canvases and your own shaders
 

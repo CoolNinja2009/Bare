@@ -159,6 +159,21 @@ BareImage bare_image_from_pixels(int width, int height, const void *rgba8) {
     return id;
 }
 
+bool bare_image_update(BareImage image, const void *rgba8) {
+    BareContext *ctx = need_ctx("bare_image_update");
+    const BareImageRec *r = bare__image(ctx, image);
+    if (!r || r->canvas || !rgba8) {
+        if (ctx) bare__log(ctx, "bare_image_update: %u isn't an image made from pixels", (unsigned)image);
+        return false;
+    }
+    intptr_t data = push_data(ctx, rgba8, r->width * r->height * 4);
+    BareGpuOp *upload = data > 0 ? push_op(ctx, BARE_GPU_IMAGE_UPLOAD) : NULL;
+    if (!upload) return false;
+    upload->as.image = (BareGpuImage){ .id = image, .width = r->width, .height = r->height, .format = BARE_RGBA8,
+                                       .pixels = as_offset(data) };
+    return true;
+}
+
 void bare_image_free(BareImage image) {
     BareContext *ctx = bare_ctx_current();
     if (!ctx || image == 0) return;

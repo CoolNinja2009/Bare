@@ -301,6 +301,10 @@ BareImage bare_image_load(const char *path);                      /* PNG, JPEG, 
 BareImage bare_image_from_pixels(int width, int height, const void *rgba8);  /* pixels are copied */
 void      bare_image_free(BareImage image);                       /* images and canvases */
 BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
+/* New pixels for an image made by bare_image_from_pixels or bare_image_load,
+ * same size (video frames, live previews): no new image, no new id. False if
+ * the image isn't one of those. */
+bool      bare_image_update(BareImage image, const void *rgba8);
 
 /* ------------------------------------------------------------------------ */
 /* Canvas: your own GPU shaders (what WebGL is to a <canvas>)               */
@@ -425,6 +429,9 @@ typedef struct BareBox {
     BareCursor cursor;
     bool focusable;             /* takes keyboard focus: a click or Tab / Shift+Tab moves it here (see bare_focus) */
     bool passthrough;           /* the mouse goes through it (CSS pointer-events: none); children still get it */
+    bool window_drag;           /* frameless windows: dragging here moves the window, double-click maximises
+                                   (CSS app-region: drag). Children that react to the mouse (a hover or press
+                                   look, a cursor, focusable) stay clickable */
     bool clip;                  /* clip children to the box, inside its border (CSS overflow: hidden) */
     BareScroll scroll;          /* scroll overflowing children (see BareScroll); implies .clip */
 
@@ -811,6 +818,45 @@ bool  bare_window(int width, int height, const char *title);
 /* Request an alpha-composited window. Use a transparent bare_background() to
  * let the desktop show through; compositor support varies by platform. */
 bool  bare_window_transparent(int width, int height, const char *title);
+
+/* A window with every option. bare_window(w, h, title) is
+ * bare_window_with(.width = w, .height = h, .title = title).
+ *
+ *     bare_window_with(.width = 1200, .height = 800, .title = "Notes", .frameless = true,
+ *                      .min_width = 640, .min_height = 420);
+ *
+ * Frameless windows have no system title bar or border: draw your own, mark
+ * it .window_drag, and put buttons on it that call bare_window_minimize /
+ * maximize / close. The edges still resize, and on Windows 11 the corners
+ * stay round with the system's shadow. */
+typedef struct BareWindowOptions {
+    int width, height;          /* logical pixels (0 = 1280 x 800) */
+    const char *title;
+    bool transparent;           /* alpha-composited (see bare_window_transparent) */
+    bool frameless;
+    int min_width, min_height;  /* logical pixels (0 = no limit) */
+} BareWindowOptions;
+#define bare_window_with(...) bare_window_with_(&(BareWindowOptions){ __VA_ARGS__ })
+bool  bare_window_with_(const BareWindowOptions *options);
+void  bare_window_minimize(void);
+void  bare_window_maximize(void);       /* toggles between maximised and restored */
+bool  bare_window_maximized(void);
+void  bare_window_close(void);          /* as the close button: bare_frame returns false */
+
+/* The window as a pane of glass: the live desktop behind it, the size of the
+ * window (physical pixels), new pictures arriving by themselves. Draw it
+ * first, behind everything, and .glass bends what's really behind the
+ * window, not a blur of it:
+ *
+ *     bare_stack(.width = BARE_GROW, .height = BARE_GROW, .image = bare_window_backdrop()) {
+ *         bare_box(.width = 400, .height = 240, .radius = 40, .glass = BARE_GLASS);
+ *     }
+ *
+ * 0 until the first picture arrives (and where unsupported: Windows 10 2004
+ * and later only, so far), so keep a background colour for that. The window
+ * is left out of screenshots and screen sharing while this runs (that is how
+ * it can see behind itself). */
+BareImage bare_window_backdrop(void);
 
 /* Ends the previous frame (layout, animate, draw) and starts the next one.
  * Returns false when the window is closed. When nothing is animating and no

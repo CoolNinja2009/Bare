@@ -17,10 +17,13 @@ typedef enum BareNativeKind {
     BARE_NATIVE_SDL_WINDOW = 1
 } BareNativeKind;
 
+enum { BARE_WINDOW_TRANSPARENT = 1, BARE_WINDOW_FRAMELESS = 2 };
+
 typedef struct BarePlatform {
     void *self;
     /* Opens the window hidden; show_window reveals it after the first frame is drawn. */
-    bool   (*open_window)(void *self, int width, int height, const char *title, bool transparent);
+    /* flags: BARE_WINDOW_TRANSPARENT, BARE_WINDOW_FRAMELESS. */
+    bool   (*open_window)(void *self, int width, int height, const char *title, unsigned flags);
     void   (*show_window)(void *self);
     void   (*close_window)(void *self);
     /* Fills `out` with up to `max` events. If none are queued, blocks up to
@@ -44,6 +47,20 @@ typedef struct BarePlatform {
      * open, 1 save, 2 folder. filters: "Markdown:md;markdown|Text:txt" or
      * NULL. NULL if the platform has none. */
     void   (*file_dialog)(void *self, uint64_t request, int kind, const char *filters, const char *path);
+    /* Window controls for apps that draw their own title bar. NULL if the
+     * platform has none. */
+    void   (*minimize)(void *self);
+    void   (*maximize)(void *self);                          /* toggles maximised / restored */
+    bool   (*maximized)(void *self);
+    void   (*set_min_size)(void *self, int width, int height);   /* logical pixels */
+    /* Frameless windows: the platform asks what's at a point of the window
+     * (logical pixels) when the mouse is there: 1 = an area that moves the
+     * window (a title bar), 0 = the app's. Called on the main thread. */
+    void   (*set_drag_query)(void *self, int (*query)(void *user, float x, float y), void *user);
+    /* The desktop behind the window (bare_window_backdrop): starts on the
+     * first call; RGBA8 pixels when a new picture arrived since the last
+     * call, else NULL (valid until the next call). NULL if unsupported. */
+    const void *(*backdrop)(void *self, int *width, int *height);
     /* Platforms that own the main loop set this; others leave it NULL. */
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);
 } BarePlatform;

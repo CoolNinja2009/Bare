@@ -6,6 +6,12 @@
 #include "bare/bare_backend.h"
 #include <SDL3/SDL.h>
 #include <string.h>
+#ifdef _WIN32
+#include "../backdrop.h"
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 typedef struct TextChunk { struct TextChunk *next; int used, cap; char *data; } TextChunk;   /* data follows it */
 
@@ -21,6 +27,13 @@ typedef struct SdlPlatform {
     char       *chosen;            /* the last answer's path, freed at the next poll */
     SDL_DialogFileFilter filters[16];
     char        filter_text[1024]; /* what `filters` point into: SDL reads them until the dialog closes */
+    bool        frameless;
+    int       (*drag_query)(void *user, float x, float y);
+    void       *drag_user;
+#ifdef _WIN32
+    BareBackdrop *backdrop;
+    bool        backdrop_failed;
+#endif
 } SdlPlatform;
 
 static SdlPlatform sdl;
@@ -34,7 +47,31 @@ static float to_logical(void) {
     return density / scale;
 }
 
-static bool open_window(void *self, int width, int height, const char *title, bool transparent) {
+/* Frameless windows: the edges resize, the app's drag areas move the window
+ * (SDL turns these into the system's own moves, so snapping and double-click
+ * to maximise work). */
+static SDL_HitTestResult hit_test(SDL_Window *win, const SDL_Point *p, void *data) {
+    (void)data;
+    int w = 0, h = 0;
+    SDL_GetWindowSize(win, &w, &h);
+    float k = to_logical();
+    int edge = (int)(6 / k + 0.5f);
+    if (!(SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED)) {
+        bool l = p->x < edge, r = p->x >= w - edge, t = p->y < edge, b = p->y >= h - edge;
+        if (t && l) return SDL_HITTEST_RESIZE_TOPLEFT;
+        if (t && r) return SDL_HITTEST_RESIZE_TOPRIGHT;
+        if (b && l) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        if (b && r) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        if (t) return SDL_HITTEST_RESIZE_TOP;
+        if (b) return SDL_HITTEST_RESIZE_BOTTOM;
+        if (l) return SDL_HITTEST_RESIZE_LEFT;
+        if (r) return SDL_HITTEST_RESIZE_RIGHT;
+    }
+    if (sdl.drag_query && sdl.drag_query(sdl.drag_user, p->x * k, p->y * k)) return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
+}
+
+static bool open_window(void *self, int width, int height, const char *title, unsigned options) {
     (void)self;
     /* Bare draws the IME's composition inline in the field; the OS still
      * shows the candidate list. */
@@ -47,11 +84,24 @@ static bool open_window(void *self, int width, int height, const char *title, bo
     float content = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (content <= 0) content = 1;
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
-    if (transparent) flags |= SDL_WINDOW_TRANSPARENT;
+    if (options & BARE_WINDOW_TRANSPARENT) flags |= SDL_WINDOW_TRANSPARENT;
+    if (options & BARE_WINDOW_FRAMELESS) flags |= SDL_WINDOW_BORDERLESS;
     sdl.window = SDL_CreateWindow(title ? title : "Bare", (int)(width * content), (int)(height * content), flags);
     if (!sdl.window) {
         SDL_Log("bare: SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
+    }
+    sdl.frameless = (options & BARE_WINDOW_FRAMELESS) != 0;
+    if (sdl.frameless) {
+        SDL_SetWindowHitTest(sdl.window, hit_test, NULL);
+#ifdef _WIN32
+        /* Windows 11 rounds and shadows a frameless window when asked. */
+        HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(sdl.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        if (hwnd) {
+            int round = 2;   /* DWMWCP_ROUND */
+            DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof round);
+        }
+#endif
     }
     sdl.wake_event = SDL_RegisterEvents(1);
     return true;
@@ -61,6 +111,9 @@ static void show_window(void *self) { (void)self; SDL_ShowWindow(sdl.window); }
 
 static void close_window(void *self) {
     (void)self;
+#ifdef _WIN32
+    bare__backdrop_stop(sdl.backdrop);
+#endif
     for (int i = 0; i <= BARE_CURSOR_NOT_ALLOWED; i++) {
         if (sdl.cursors[i]) SDL_DestroyCursor(sdl.cursors[i]);
     }
@@ -342,6 +395,49 @@ static void *native(void *self, BareNativeKind what) {
     return what == BARE_NATIVE_SDL_WINDOW ? sdl.window : NULL;
 }
 
+static void minimize(void *self) { (void)self; SDL_MinimizeWindow(sdl.window); }
+
+static bool maximized(void *self) {
+    (void)self;
+    return (SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_MAXIMIZED) != 0;
+}
+
+static void maximize(void *self) {
+    if (maximized(self)) SDL_RestoreWindow(sdl.window);
+    else SDL_MaximizeWindow(sdl.window);
+}
+
+static void set_min_size(void *self, int width, int height) {
+    (void)self;
+    float k = to_logical();
+    SDL_SetWindowMinimumSize(sdl.window, (int)(width / k), (int)(height / k));
+}
+
+static void set_drag_query(void *self, int (*query)(void *user, float x, float y), void *user) {
+    (void)self;
+    sdl.drag_query = query;
+    sdl.drag_user = user;
+}
+
+#ifdef _WIN32
+static void backdrop_wake(void *user) { wake(user); }
+#endif
+
+static const void *backdrop(void *self, int *width, int *height) {
+    (void)self;
+#ifdef _WIN32
+    if (!sdl.backdrop && !sdl.backdrop_failed) {
+        void *hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(sdl.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        sdl.backdrop = bare__backdrop_start(hwnd, backdrop_wake, &sdl);
+        sdl.backdrop_failed = !sdl.backdrop;
+    }
+    return bare__backdrop_take(sdl.backdrop, width, height);
+#else
+    (void)width; (void)height;
+    return NULL;
+#endif
+}
+
 /* SDL may call back on another thread: the answer travels as an event. */
 static void dialog_done(void *user, const char *const *files, int filter) {
     (void)filter;
@@ -401,6 +497,12 @@ BarePlatform bare__sdl3_platform(void) {
         .stop_text_input = stop_text_input,
         .native = native,
         .file_dialog = file_dialog,
+        .minimize = minimize,
+        .maximize = maximize,
+        .maximized = maximized,
+        .set_min_size = set_min_size,
+        .set_drag_query = set_drag_query,
+        .backdrop = backdrop,
         .run = NULL,
     };
     return p;

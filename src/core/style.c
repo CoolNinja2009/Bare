@@ -34,7 +34,7 @@ static const Field box_fields[] = {
     F(BareBox, shadow), F(BareBox, opacity), F(BareBox, scale), F(BareBox, offset), F(BareBox, glass),
     F(BareBox, text_color), F(BareBox, image),
     LOOK(BareBox, hover), LOOK(BareBox, press), LOOK(BareBox, focus),
-    F(BareBox, cursor), F(BareBox, focusable), F(BareBox, passthrough), F(BareBox, clip), F(BareBox, scroll),
+    F(BareBox, cursor), F(BareBox, focusable), F(BareBox, passthrough), F(BareBox, window_drag), F(BareBox, clip), F(BareBox, scroll),
     F(BareBox, animate), F(BareBox, animate_layout),
 };
 

@@ -618,6 +618,30 @@ static void blit(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *from, SDL_GPUTexture
     SDL_BlitGPUTexture(cmd, &info);
 }
 
+/* Copies only the part of the scene a glass draw can sample: its quad, grown by
+ * how far refraction, zoom and frost reach. The rest of the backdrop keeps the
+ * previous snapshot, which this glass never reads. */
+static void blit_region(SDL_GPUCommandBuffer *cmd, const GlassDraw *g, Uint32 w, Uint32 h) {
+    const float *b = g->vert.bounds;
+    float reach = g->frag.p0[2] * 2.0f * SDL_max(g->frag.p0[3], 1.0f) + g->frag.p1[0] * 8.0f + 48.0f;
+    float zoom = g->frag.p2[1] > 1.0f ? g->frag.p2[1] : 1.0f;
+    reach += (zoom - 1.0f) * SDL_max(b[2], b[3]);
+    int x0 = SDL_max((int)(b[0] - reach), 0), y0 = SDL_max((int)(b[1] - reach), 0);
+    int x1 = SDL_min((int)(b[0] + b[2] + reach) + 1, (int)w), y1 = SDL_min((int)(b[1] + b[3] + reach) + 1, (int)h);
+    if (x1 <= x0 || y1 <= y0) return;
+    SDL_GPUBlitInfo info;
+    SDL_zero(info);
+    info.source.texture = gpu.scene;
+    info.source.x = info.destination.x = (Uint32)x0;
+    info.source.y = info.destination.y = (Uint32)y0;
+    info.source.w = info.destination.w = (Uint32)(x1 - x0);
+    info.source.h = info.destination.h = (Uint32)(y1 - y0);
+    info.destination.texture = gpu.backdrop;
+    info.load_op = SDL_GPU_LOADOP_LOAD;
+    info.filter = SDL_GPU_FILTER_NEAREST;
+    SDL_BlitGPUTexture(cmd, &info);
+}
+
 static SDL_GPURenderPass *begin_scene_pass(SDL_GPUCommandBuffer *cmd, bool clear, BareColorF c) {
     SDL_GPUColorTargetInfo ct;
     SDL_zero(ct);
@@ -884,12 +908,12 @@ static void render(void *self, const BareDrawList *list) {
         if (b->glass >= 0) {
             /* Snapshot what's behind the glass, with blurred levels for frost. */
             SDL_EndGPURenderPass(pass);
-            blit(cmd, gpu.scene, gpu.backdrop, sw, sh);
+            const GlassDraw *g = &gpu.glass[b->glass];
+            blit_region(cmd, g, sw, sh);
             SDL_GenerateMipmapsForGPUTexture(cmd, gpu.backdrop);
             pass = begin_scene_pass(cmd, false, list->clear);
             bound = false;
 
-            const GlassDraw *g = &gpu.glass[b->glass];
             SDL_BindGPUGraphicsPipeline(pass, gpu.glass_pipeline);
             SDL_PushGPUVertexUniformData(cmd, 0, &g->vert, sizeof g->vert);
             SDL_PushGPUFragmentUniformData(cmd, 0, &g->frag, sizeof g->frag);
