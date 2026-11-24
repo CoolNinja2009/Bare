@@ -143,15 +143,15 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 ## Current status
 
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
-(animation), M5 (text and images), M6 (clipping and scrolling) and M7 (style system) done; M7.5 (BareType) in
-progress: focus, fields, every shortcut, absolute positioning and most text formatting are done.** Next in M7.5:
-`bare_editor` / `BareDoc` + `examples/code.c`, `.weight` / `.italic` / text `.shadow` / rich text spans, and the
-hand checks below. The optimizations below can be interleaved.
+(animation), M5 (text and images), M6 (clipping and scrolling), M7 (style system), M7.5 (BareType: focus, fields,
+rich text, the editor) and M8 (widgets) done, plus `examples/write/` (a Markdown / txt editor on liquid glass).**
+The user put M9 (sokol) and M10 (web parity) on hold. Open: the hand checks below, the optimizations below.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
   Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-  `scroll.c`, `styles.c`, `editor.c`, `glass_motion/`, `fluid/`. 11 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  `scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/`, `fluid/`. 13 test programs
+  pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -237,9 +237,35 @@ hand checks below. The optimizations below can be interleaved.
   `.underline`, `.strike`, `.letter_spacing`, `.max_lines` + `.ellipsis` (also `.nowrap` + `.ellipsis`, which
   lets text shrink), `.transform` (ASCII + Latin-1 case), `.opacity`. `text.c` example shows them and a "NEW"
   badge (capture checked).
+- Rich text (M7.5, `src/core/font.c`, runs in `text.c`): seven built-in faces (Inter regular / semibold / bold /
+  italic / bold italic, JetBrains Mono regular / bold as `BARE_MONO`, Latin subsets, ~220 KB); `.weight` picks the
+  nearest face as CSS does, `.italic`; `bare_font_add_face` for loaded families; text `.shadow` (blurred glyphs
+  drawn first); `bare_paragraph` + `bare_span` (runs with their own font, size, colour, decorations, background).
+  `BARE_SANS` names font 0 where 0 means another default (the editor).
+- The editor (M7.5, `src/core/doc.c` + `doc.h`, `doc_edit.c`, `doc_view.c`): `BareDoc` = array of lines pointing
+  into the loaded file until edited (not a piece table; 1M lines open at once), BOM and CRLF kept, selections
+  shifted by every edit, undo groups with typing-run merging and undo-aware `bare_doc_modified`, find (case / whole
+  word). `bare_editor(doc, ...)`: only visible lines laid out (prefix sums of wrapped rows), multiple carets
+  (Ctrl+D, Ctrl+Shift+L, Alt+click, Ctrl+Alt+Up/Down), Alt+drag column selection, line moves / copies / deletes,
+  indent / outdent, comment toggle, auto-indent with an app indenter, auto-close pairs, bracket matching, soft wrap,
+  gutter, current line, ruler, visible whitespace, find / replace / go-to bar, highlighters with per-line end
+  states (re-run only from an edit down, budgeted per frame). Editor keys are a scope in the binding table
+  (`BareKeyBinding.editor`). The style's padding insets the text (CSS textarea). `examples/code.c` (C, 1M-line log).
+  Deferred: regex find, Alt+Shift+arrow columns, drag-to-move, change hooks / decorations / read-only ranges.
+- Widgets (M8, `src/core/widgets.c`, only `bare.h`): `bare_button`, `bare_checkbox`, `bare_slider`,
+  `bare_list_item`; `tests/test_widgets.c`; `examples/widgets.c` (45 lines). File dialogs: `bare_file_dialog` /
+  `bare_file_chosen` (async; `BarePlatform.file_dialog` -> `BARE_EVENT_FILE_CHOSEN`; SDL3's dialogs), and
+  `bare_wake_in(seconds)`.
+- Write (`examples/write/`: `write.c` app, `md.c` Markdown highlighter / indenter / preview made of Bare elements):
+  Write / Split / Read modes with a sliding glass knob, panels gliding on springs, accent-coloured orbs behind
+  frosted glass, eight accents, dark / light, sans / mono, a sidebar of open documents, clickable task boxes in the
+  preview, Ctrl+B / I / K, zoom, toasts, open / save dialogs. Checked by captures (dark, light, each mode, popover)
+  and an injected-event scratch harness (tick a task, type, Ctrl+B, switch mode); GCC = MSVC pixel for pixel.
+  Idle: 0 ms of CPU over 6 s once the caret's 10 s of blinking ends (~94 MB working set). Not verified: the file
+  dialogs (never opened in a test), a real mouse and keyboard.
 - Stand-ins: `layout.c` and `buttons.c` still use grey bars where labels would go.
-- Not verified by hand (M7.5): a real keyboard and mouse in `editor.c` (everything was driven by injected SDL
-  events), the Windows Japanese IME (composition draws, but Inter has no CJK glyphs: composed text shows blank
+- Not verified by hand (M7.5): a real keyboard and mouse in `editor.c`, `code.c` and `write/` (everything was
+  driven by injected SDL events), the Windows Japanese IME (composition draws, but Inter has no CJK glyphs: composed text shows blank
   until there's a fallback font), macOS keys on a Mac (unit-tested only).
 - Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
   and the motion was checked in captures); DPI scale above 100%, including text sharpness at 150%/200% (this display

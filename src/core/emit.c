@@ -239,7 +239,7 @@ void bare__emit(BareContext *ctx) {
             BareColorF tc = color_f(ink ? ink[i] : ctx->theme.text, e->opacity);
             float k = s * e->vscale;
             if (e->text->deco) bare__field_emit_under(ctx, e->text, r, k, snap, e->opacity);   /* selection */
-            bare__text_emit(ctx, e->text, r, e->vscale, snap, tc);
+            bare__text_emit(ctx, e->text, r, e->vscale, snap, tc, e->opacity);
             if (e->text->deco) bare__field_emit_over(ctx, e->text, r, k, snap, tc);           /* caret */
             continue;
         }

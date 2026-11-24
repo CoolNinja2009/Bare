@@ -21,6 +21,9 @@ static struct {
     BareTextInputKind text_input;     /* what the platform was last told */
     BareRect      text_rect;
     BareEvent     events[MAX_EVENTS];
+    BareId        chosen_id;          /* a file dialog's answer, shown for one frame */
+    char          chosen[4096];
+    int           chosen_frames;
 } app;
 
 static const char *clip_get(void *user) { (void)user; return app.platform.clipboard_get(app.platform.self); }
@@ -58,6 +61,17 @@ bool bare_window(int width, int height, const char *title) {
 static void apply(const BareEvent *e) {
     switch (e->kind) {
     case BARE_EVENT_QUIT: app.quit = true; break;
+    case BARE_EVENT_FILE_CHOSEN: {
+        const char *p = e->as.file.path ? e->as.file.path : "";
+        size_t n = strlen(p);
+        if (n >= sizeof app.chosen) n = 0;   /* a path that long can't be opened anyway */
+        memcpy(app.chosen, p, n);
+        app.chosen[n] = 0;
+        app.chosen_id = e->as.file.request;
+        app.chosen_frames = 1;   /* the coming frame sees it; it is gone after */
+        app.dirty = true;
+        return;
+    }
     case BARE_EVENT_RESIZE:
         app.width = e->as.size.w;
         app.height = e->as.size.h;
@@ -90,6 +104,7 @@ static void end_frame(void) {
     }
     app.in_frame = false;
     app.dirty = animating || app.continuous;
+    if (app.chosen_frames > 0 && --app.chosen_frames == 0) app.chosen_id = 0;
     if (app.capture_frames > 0 && --app.capture_frames == 0) app.quit = true;
 }
 
@@ -120,6 +135,15 @@ bool bare_frame(void) {
     bare_ctx_begin(app.ctx, app.width, app.height, app.scale, app.time);
     app.in_frame = true;
     return true;
+}
+
+void bare_file_dialog(BareId id, BareFileDialog kind, const char *filters, const char *path) {
+    if (!app.open || !app.platform.file_dialog) return;
+    app.platform.file_dialog(app.platform.self, id, (int)kind, filters, path);
+}
+
+const char *bare_file_chosen(BareId id) {
+    return id && app.chosen_frames > 0 && app.chosen_id == id ? app.chosen : NULL;
 }
 
 void bare_run(void (*frame)(void *user), void *user) {

@@ -8,7 +8,7 @@ set_property(CACHE BARE_BACKEND PROPERTY STRINGS SDL3)
 option(BARE_BUILD_TESTS "Build the headless unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(BARE_BUILD_EXAMPLES "Build the examples" ${PROJECT_IS_TOP_LEVEL})
 option(BARE_BUILD_BENCH "Build the benchmarks (bench/; needs the examples)" OFF)
-option(BARE_DEFAULT_FONT "Embed the default font (Inter, Latin subset, ~36 KB) so text works with no setup" ON)
+option(BARE_DEFAULT_FONT "Embed the default fonts (Inter in five faces and JetBrains Mono in two, Latin subsets, ~220 KB) so text works with no setup" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -55,26 +55,39 @@ add_library(bare_core STATIC
     src/core/scroll.c
     src/core/style.c
     src/core/gpu.c
+    src/core/font.c
     src/core/text.c
     src/core/caret.c
     src/core/focus.c
     src/core/edit.c
     src/core/field.c
+    src/core/widgets.c
+    src/core/doc.c
+    src/core/doc_edit.c
+    src/core/doc_view.c
     src/core/font_stb.c
     src/core/image.c
 )
 target_include_directories(bare_core PUBLIC include PRIVATE src/core)
 target_include_directories(bare_core SYSTEM PRIVATE ${stb_SOURCE_DIR})
 if(BARE_DEFAULT_FONT)
-    set(BARE_FONT_FILE ${PROJECT_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf)
-    set(BARE_FONT_C ${PROJECT_BINARY_DIR}/generated/bare_default_font.c)
-    add_custom_command(OUTPUT ${BARE_FONT_C}
-        COMMAND ${CMAKE_COMMAND} -DIN=${BARE_FONT_FILE} -DOUT=${BARE_FONT_C} -DNAME=bare__default_font
-            -P ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
-        DEPENDS ${BARE_FONT_FILE} ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
-        COMMENT "Embedding the default font"
-        VERBATIM)
-    target_sources(bare_core PRIVATE ${BARE_FONT_C})
+    # file:symbol, in the order of the built-in font ids (src/core/font.c).
+    foreach(entry Inter-Regular:default_font JetBrainsMono-Regular:font_mono Inter-SemiBold:font_sans_semibold
+                  Inter-Bold:font_sans_bold Inter-Italic:font_sans_italic Inter-BoldItalic:font_sans_bold_italic
+                  JetBrainsMono-Bold:font_mono_bold)
+        string(REPLACE ":" ";" parts ${entry})
+        list(GET parts 0 file)
+        list(GET parts 1 symbol)
+        set(in ${PROJECT_SOURCE_DIR}/assets/fonts/${file}.ttf)
+        set(out ${PROJECT_BINARY_DIR}/generated/bare_${symbol}.c)
+        add_custom_command(OUTPUT ${out}
+            COMMAND ${CMAKE_COMMAND} -DIN=${in} -DOUT=${out} -DNAME=bare__${symbol}
+                -P ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
+            DEPENDS ${in} ${PROJECT_SOURCE_DIR}/cmake/embed_file.cmake
+            COMMENT "Embedding ${file}.ttf"
+            VERBATIM)
+        target_sources(bare_core PRIVATE ${out})
+    endforeach()
     target_compile_definitions(bare_core PRIVATE BARE_HAS_DEFAULT_FONT)
 endif()
 target_compile_options(bare_core PRIVATE ${BARE_STRICT})

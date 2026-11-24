@@ -1,12 +1,19 @@
-# The default font
+# The default fonts
 
-`Inter-Regular.ttf` is [Inter](https://github.com/rsms/inter) 4.1 Regular by The Inter Project Authors, under the
-SIL Open Font License 1.1 (`OFL.txt`). It's embedded into Bare at build time (`cmake/embed_file.cmake`); build with
-`-DBARE_DEFAULT_FONT=OFF` to leave it out.
+Bare embeds seven faces at build time (`cmake/embed_file.cmake`); build with `-DBARE_DEFAULT_FONT=OFF` to leave
+them out. Font 0 is the sans family, `BARE_MONO` the monospaced one; `.weight` and `.italic` pick a face.
 
-It is a subset: Latin-1, common punctuation and symbols (dashes, quotes, €, ™, arrows, ✓ ✕, minus), with only the
-`kern` feature and no hinting (stb_truetype ignores hints), which takes it from 411 KB to 36 KB. Made with
-fonttools from `extras/ttf/Inter-Regular.ttf` in the release zip:
+| File | Font | Licence |
+|---|---|---|
+| `Inter-Regular.ttf`, `-SemiBold`, `-Bold`, `-Italic`, `-BoldItalic` | [Inter](https://github.com/rsms/inter) 4.1 by The Inter Project Authors | SIL OFL 1.1 (`OFL.txt`) |
+| `JetBrainsMono-Regular.ttf`, `-Bold` | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) 2.304 by The JetBrains Mono Project Authors | SIL OFL 1.1 (`OFL-JetBrainsMono.txt`) |
+
+Every face is made the same way, shown here for Inter Regular (from `extras/ttf/` in Inter's release zip; JetBrains
+Mono's come from `fonts/ttf/` in its zip).
+
+Each is a subset: Latin-1, common punctuation and symbols (dashes, quotes, €, ™, arrows, ✓ ✕, minus), with only the
+`kern` feature and no hinting (stb_truetype ignores hints), which takes Inter from 411 KB to 36 KB a face
+(JetBrains Mono: 19 KB). Made with fonttools:
 
 ```powershell
 python -m fontTools.subset Inter-Regular.ttf --output-file=subset.ttf --layout-features=kern --no-hinting `

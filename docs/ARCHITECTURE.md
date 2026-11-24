@@ -49,13 +49,17 @@ src/
     field.c            bare_input: the field box, mouse selection, caret blink, IME composition
     caret.c            positions in wrapped text: offset <-> caret rect, hit testing, selection rects
     scroll.c           scroll boxes: wheel routing and hand-off, the offset spring, scrollbars, bare_visible
-    text.c             UTF-8, line breaking, glyph cache and atlas (font backend below)
+    text.c             UTF-8, line breaking, rich text runs, glyph cache and atlas (font backend below)
+    font.c             font handles and families: the built-in faces, bare_font_add_face, .weight / .italic
     font_stb.c         stb_truetype implementation of the font backend
+    doc.c, doc.h       BareDoc: lines (copy on write from the loaded file), selections, undo groups, find
+    doc_edit.c         the editor's commands on every caret: typing, pairs, indent, line moves, paste
+    doc_view.c         bare_editor: visible lines only, wrapped rows, the gutter, find bar, mouse
     image.c            image handles and pending texture uploads (decoding via stb_image)
     emit.c             tree -> BareDrawList
     gpu.c              images, canvases, shaders and passes: GPU ops queued in call order
     context.c          BareContext, frame begin/end, the current-context pointer
-    widgets.c          (M8) button, checkbox, slider, list item: built only from public elements
+    widgets.c          button, checkbox, slider, list item: built only from public elements
   bare.c               the simple API: bare_window / bare_frame / bare_run / bare_quit on top of
                        the core context and the backend chosen at build time
   backend/

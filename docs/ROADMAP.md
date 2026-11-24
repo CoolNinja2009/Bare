@@ -228,21 +228,28 @@ non-zero value; hover look on a style applies to elements using it; chained styl
 **Example:** `examples/styles.c`: one settings page in a light and a dark theme, switched by a button.
 **Done when:** the cards example shrinks noticeably by using styles.
 
-## [ ] M7.5: BareType: keyboard focus and text editing (added by the user)
+## [x] M7.5: BareType: keyboard focus and text editing (added by the user)
 
 **Goal:** text fields that feel native on Windows, macOS and Linux. Typing is a core feature of a GUI library, not
 an app's job: no app should have to map undo, redo, word jumps, selection or the clipboard itself, so all of it is
 built in (ScreenPlus's `textedit.c` is one user of it). Before M8 so the widget API is designed with editing and
 focus in it.
 
-**Progress (2026-11-24):** done and tested: focus and Tab order, the focus look, platform text input and IME
-composition, `bare_input` (single-line, multi-line, password, read-only) with every shortcut in the table below,
-the binding table, `bare_edit`, undo / redo, mouse selection, the blinking caret at 0% idle CPU, the text layout
-hooks, `.position = BARE_ABSOLUTE`, and these formatting options: `.underline`, `.strike`, `.letter_spacing`,
-`.max_lines` / `.ellipsis`, `.transform`, `.opacity`. `examples/editor.c` works by injected events.
-Still to do: `bare_editor` / `BareDoc` and `examples/code.c`; `.weight` / `.italic` (font families), text
-`.shadow`, rich text spans; checking a real keyboard, mouse and the Windows Japanese IME by hand (the default font
-has no CJK glyphs, so composed Japanese shows as blanks until a fallback font exists).
+**Done (2026-11-24):** focus and Tab order, the focus look, platform text input and IME composition, `bare_input`
+(single-line, multi-line, password, read-only) with every shortcut in the table below, the binding table,
+`bare_edit`, undo / redo, mouse selection, the blinking caret at 0% idle CPU, the text layout hooks,
+`.position = BARE_ABSOLUTE`, every text option listed below (`.weight` / `.italic` from font families, text
+`.shadow`, `bare_paragraph` / `bare_span` rich text), and the editor: `BareDoc` (`doc.c`, `doc_edit.c`) and
+`bare_editor` (`doc_view.c`) with multiple carets, column selection, find / replace / go to line, line commands,
+auto-indent and auto-close, bracket matching, soft wrap, highlighters and indenters. Built in: Inter in five faces
+and JetBrains Mono (`BARE_MONO`) in two. Examples: `editor.c`, `code.c` (C highlighting, a 1M-line log) and
+`write/` (a Markdown and plain text editor). How it differs from the plan below: documents are an array of lines
+that point into the loaded file until edited (copy on write) rather than a piece table; it opens 1M lines at once
+and edits are O(line length), which was enough. Deferred: regex find, Alt+Shift+arrow column selection,
+drag-to-move text, middle-click paste, Ctrl+wheel zoom, change events / decorations / inline widgets / read-only
+ranges / autosave, a minimap, animated carets. Not checked by hand yet: a real keyboard, mouse and the Windows
+Japanese IME (the built-in fonts have no CJK glyphs, so composed Japanese shows as blanks until a fallback font
+exists); everything was driven by injected events and captures.
 
 - **Focus** (`src/core/focus.c`): click to focus, Tab / Shift+Tab in declaration order, Escape and clicking elsewhere
   blur it; `.focusable`, `BareState.focused`, `bare_focus(id)`; a theme focus-ring look (`.focus`, like `.hover`);
@@ -329,9 +336,14 @@ filtering a `bare_visible` list, in the theme; `examples/code.c`: a code editor 
 **Done when:** the form is usable by keyboard alone; typing, selecting and IME (Windows Japanese IME) work by hand
 on Windows; headless tests pass in CI on Windows, Linux and macOS.
 
-## [ ] M8: Core widgets
+## [x] M8: Core widgets
 
 **Goal:** one-call widgets built only from public elements: proves the API is enough.
+
+**Done (2026-11-24):** `src/core/widgets.c` uses only `bare.h`; presses stay with the element that took them, so
+sliders keep dragging outside their rect without a separate capture API. Also: `bare_file_dialog` /
+`bare_file_chosen` (the system's open, save and folder dialogs, without blocking) and `bare_wake_in`.
+`examples/widgets.c` is 45 lines; `tests/test_widgets.c` covers the list below.
 
 - `bare_button`, `bare_checkbox` (animated check), `bare_slider` (drag with press capture; keyboard arrows when
   hovered), `bare_list_item` (hover/selected look); each themeable through `.style` and overridable per call.
@@ -368,8 +380,7 @@ needs them.
   outline offset, linear / radial / conic gradients (`.gradient`), several shadows and inset shadows, dashed borders.
 - Transforms: `.rotate`, `.origin` (transform-origin); skew and 3D perspective later.
 - Filters: blur, brightness, contrast, saturate, grayscale on an element (`.filter`), blend modes.
-- Text extras: letter spacing, underline / strike and ellipsis came in M7.5; text shadow and weight / italic are
-  scheduled there too.
+- Text extras: letter spacing, underline / strike, ellipsis, text shadow and weight / italic came in M7.5.
 
 ---
 
@@ -426,21 +437,23 @@ needed; **beyond** = something the web can't do as easily.
 | text, wrapping, size, colour (inherited), line-height, align, nowrap | `bare_text("...", .size = 20)`, `.text_color` | done |
 | `@font-face` | `bare_font_load("x.ttf")`, `bare_font_from_memory` | done |
 | letter-spacing, underline / line-through, text-transform, ellipsis, line-clamp | `.letter_spacing`, `.underline`, `.strike`, `.transform`, `.ellipsis`, `.max_lines` | done |
-| font-weight, italic, text-shadow, inline spans | `.weight`, `.italic`, `.shadow`, `bare_paragraph` / `bare_span` | M7.5 |
+| font-weight, italic, text-shadow, inline spans | `.weight`, `.italic`, `.shadow`, `bare_paragraph` / `bare_span` | done |
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
 | `<input>`, `<textarea>`, password, placeholder, selection, focus / Tab, `:focus` | `bare_input(buf, cap, ...)`, `.focusable`, `.focus = {...}`, `bare_focus` | done |
 | every editing shortcut, undo / redo, IME composition | built in; remappable with `bare_edit_bind`, callable with `bare_edit` | done, beyond |
-| `contenteditable` code editors (CodeMirror, Monaco) | `bare_editor` on a `BareDoc` | M7.5 |
+| `contenteditable` code editors (CodeMirror, Monaco) | `bare_editor` on a `BareDoc` (multiple carets, find / replace, highlighters) | done |
 | **Interaction (the JS part)** | | |
 | `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks, animated by `.animate` | done |
 | `onclick`, `oncontextmenu`, hover | `if (bare_box(...).clicked)`: the return value; clicks bubble | done |
 | `cursor`, `pointer-events: none` | `.cursor`, `.passthrough` | done |
 | keyboard events | `bare_key_down`, `bare_key_pressed` (layout-aware letters) | done |
-| `dblclick`, mouse buttons 4/5, `mousedown` coordinates for drags | | M8 |
+| `dblclick`, drags | `BareState.double_clicked`; `.pressed` + `bare_mouse()` (the press stays with the element) | done |
+| mouse buttons 4/5 | | later |
 | clipboard | `bare_clipboard()`, `bare_set_clipboard()` | done (API) |
 | state, `useState`, re-render | your C variables; every frame redraws from them | C |
 | CSS classes, variables, themes | `.style = &card` (chains), `bare_theme()`, `bare_set_theme` (animated) | done |
-| buttons, checkboxes, sliders | `bare_button` ... | M8 |
+| buttons, checkboxes, sliders, list items | `bare_button`, `bare_checkbox`, `bare_slider`, `bare_list_item` | done |
+| `<input type=file>`, `showOpenFilePicker` | `bare_file_dialog` (open, save, folder; doesn't block) | done |
 | drag and drop, touch | | later |
 | accessibility (screen readers) | platform a11y trees | later |
 | runs in a browser | sokol backend + Emscripten | M9 |

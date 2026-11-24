@@ -11,7 +11,6 @@
  * pixels from the text element's top left; `box_w` is its width, for
  * alignment. */
 #include "internal.h"
-#include <math.h>
 
 static float align_of(BareAlign al) {
     return al == BARE_CENTER ? 0.5f : al == BARE_END ? 1.0f : 0.0f;
@@ -77,12 +76,14 @@ float bare__text_x_on_line(const BareText *t, int l, int offset, float box_w) {
     return pen;
 }
 
+/* The caret is as tall as the paragraph's font, on the line's baseline. */
 BareRect bare__text_caret(const BareText *t, int offset, bool upstream, float box_w) {
+    if (t->line_count == 0) return (BareRect){ 0, 0, 0, t->line_height };
     int l = bare__text_line_of(t, offset, upstream);
     float x = bare__text_x_on_line(t, l, offset, box_w);
-    float lead = (t->line_height - (t->ascent + t->descent)) * 0.5f;
-    BareRect r = { x, (float)l * t->line_height + lead, 0, t->ascent + t->descent };
-    if (r.h <= 0) { r.y = (float)l * t->line_height; r.h = t->line_height; }
+    const BareTextLine *line = &t->lines[l];
+    BareRect r = { x, line->y + line->asc - t->ascent, 0, t->ascent + t->descent };
+    if (r.h <= 0) { r.y = line->y; r.h = line->h; }
     return r;
 }
 
@@ -103,10 +104,7 @@ int bare__text_offset_at(const BareText *t, int l, float x, float box_w, bool *u
 }
 
 int bare__text_hit(const BareText *t, float x, float y, float box_w, bool *upstream) {
-    int l = t->line_height > 0 ? (int)floorf(y / t->line_height) : 0;
-    if (l < 0) l = 0;
-    if (l >= t->line_count) l = t->line_count - 1;
-    return bare__text_offset_at(t, l, x, box_w, upstream);
+    return bare__text_offset_at(t, bare__text_line_at_y(t, y), x, box_w, upstream);
 }
 
 /* Rects (logical, text-local) covering bytes [a, b), one per line; a
@@ -126,7 +124,7 @@ int bare__text_range_rects(const BareText *t, int a, int b, float box_w, BareRec
         float x1 = bare__text_x_on_line(t, l, e, box_w);
         if (b > le - 1 && hard_break(t, l) && l + 1 < t->line_count) x1 += t->size * 0.3f;   /* the '\n' */
         if (x1 - x0 <= 0) continue;
-        out[n++] = (BareRect){ x0, (float)l * t->line_height, x1 - x0, t->line_height };
+        out[n++] = (BareRect){ x0, t->lines[l].y, x1 - x0, t->lines[l].h };
     }
     return n;
 }

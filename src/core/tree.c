@@ -50,6 +50,8 @@ static BareId make_id(BareContext *ctx, int index, uint64_t parent_id) {
 void bare__tree_begin(BareContext *ctx) {
     ctx->elem_count = 0;
     ctx->depth = 0;
+    ctx->para_elem = -1;
+    ctx->para_depth = 0;
     ctx->overflow = 0;
     int expect = BARE__MAX(ctx->elem_cap, 64);
     bare__map_init(&ctx->sites, &ctx->frame, expect);
@@ -119,6 +121,11 @@ int bare__tree_push(BareContext *ctx, const BareBox *in, const char *file, int l
 }
 
 void bare__tree_end(BareContext *ctx) {
+    if (ctx->para_elem >= 0) {
+        bare__log(ctx, "bare_paragraph opened at %s:%d was never closed", ctx->para_file, ctx->para_line);
+        ctx->para_depth = 0;
+        bare_paragraph_end_();
+    }
     /* Everything but the root should be closed by now. */
     while (ctx->depth > 1) {
         BareElem *e = &ctx->elems[ctx->stack[ctx->depth - 1]];
@@ -149,6 +156,7 @@ BareState bare__state_of(BareContext *ctx, int index) {
     s.hovered = bare__chain_has(&ctx->hover, e->id);
     s.pressed = bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id);
     s.clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_LEFT], e->id);
+    s.double_clicked = s.clicked && ctx->click_count == 2;
     s.right_clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_RIGHT], e->id);
     s.focused = e->id == ctx->focus_id;
     if (e->node >= 0) {

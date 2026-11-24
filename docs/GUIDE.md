@@ -237,10 +237,11 @@ bare_textf("Clicked %d times", clicks);                      /* printf-style */
 
 Text is an element like a box. It's as wide as its longest line, but no wider than its parent lets it be: then it
 wraps, at spaces and after hyphens (a word longer than the line breaks where it must). In a row it shrinks down to
-its longest word before anything overflows, like inline text in a flex item. `
-` starts a new line.
+its longest word before anything overflows, like inline text in a flex item. `\n` starts a new line.
 
 - `.size` (default 16), `.line_height` (a multiple of the size, default 1.3), `.font`, `.color`.
+- `.weight = BARE_BOLD` (or `BARE_MEDIUM`, `BARE_SEMIBOLD`, any 100-900) and `.italic = true`.
+- `.shadow = { 0, 2, 6, 0, BARE_RGBA(0, 0, 0, 120) }`: x, y, blur and colour, like CSS `text-shadow`.
 - `.align = BARE_CENTER` or `BARE_END` aligns each wrapped line inside the text's box. Give the text the width to
   align in: `.align = BARE_STRETCH` on a column, or a parent of fixed width.
 - `.nowrap = true` keeps it on one line.
@@ -263,8 +264,22 @@ bare_column(.width = 320, .gap = 6, .text_color = BARE_RGB(200, 205, 220)) {
 **Fonts.** The default font is Inter (Latin and common symbols), built in, so text works with no setup. Load others
 with `BareFont f = bare_font_load("fonts/Display.ttf");` once, then `.font = f`. `bare_font_from_memory(data, size)`
 uses a font you've embedded (the data must stay alive). Text is rasterized at the screen's real pixel size, so it's
-sharp at 150% and 200%. Bold and italic need their own font files for now *(`.weight`, `.italic`, text shadow and
-mixed styles in one paragraph are coming in M7.5)*.
+sharp at 150% and 200%. `BARE_MONO` is the built-in monospaced font (JetBrains Mono), for code.
+
+**Weights and italics** come from a font's family: the built-in Inter has regular, semibold, bold, italic and bold
+italic, and `.weight` picks the nearest one the way CSS does. Give a font you loaded more faces with
+`bare_font_add_face(family, face, BARE_BOLD, false)`.
+
+**Mixed styles in one paragraph** (HTML's `<b>`, `<a>` and `<span>`): spans wrap together as one flow.
+
+```c
+bare_paragraph(.size = 18) {
+    bare_span("Read the ");
+    bare_span("guide", .color = t->accent, .underline = true);
+    bare_span(" before you ", .italic = true);
+    bare_span("ship", .weight = BARE_BOLD);
+}
+```
 
 **Images.** `bare_image_load("photo.png")` (PNG, JPEG, BMP, GIF's first frame, TGA) once, then show it with `.image`
 on any box. It stretches to the box and is cut to its `.radius`, so a round avatar is:
@@ -502,6 +517,63 @@ adds or remaps a key (`BARE_MOD_SHORTCUT` is Ctrl, or Cmd on a Mac); `bare_edit(
 runs any editing action from a menu or toolbar button. `examples/editor.c` is a sign-up form and a search box
 filtering 5,000 rows.
 
+### The editor: code, notes and long documents
+
+For more than a field, `bare_editor` edits a `BareDoc`: a document Bare owns, with its own undo history and any
+number of carets. Only the lines on screen are laid out, so a million-line file opens and scrolls at once.
+
+```c
+static BareDoc *doc;
+if (!doc) doc = bare_doc_load("notes.md");                   /* or bare_doc_create() */
+bare_editor(doc, .line_numbers = true, .wrap = true);
+if (bare_key_down(BARE_KEY_SHORTCUT) && bare_key_pressed(BARE_KEY_S)) bare_doc_save(doc, "notes.md");
+```
+
+On top of every field shortcut: Ctrl+D selects the next match (one caret each), Ctrl+Shift+L all of them, Alt+click
+adds a caret, Alt+drag selects a column; Alt+Up / Down move lines, Shift+Alt+Up / Down copy them, Ctrl+Shift+K
+deletes one, Tab / Shift+Tab indent; Ctrl+F finds, Ctrl+H replaces, Ctrl+G goes to a line. The file keeps its line
+endings and byte order mark, and `bare_doc_modified` knows when undo brings it back to what was saved.
+
+- Options: `.font` (default `BARE_MONO`; `BARE_SANS` for prose), `.size`, `.line_height`, `.wrap`, `.line_numbers`,
+  `.highlight_line`, `.whitespace`, `.ruler = 80`, `.tab_size`, `.spaces` (Tab types spaces), `.read_only`,
+  `.comment = "// "` (Ctrl+/ toggles it), `.auto_close = "()[]{}\"\""` (pairs typed together), `.style` (its box;
+  the padding insets the text).
+- `.highlight` colours lines: a function that reads one line and writes coloured spans (bold, italic, underline,
+  backgrounds too). It gets the state the previous line ended in, so block comments and fenced code work, and Bare
+  re-runs it only from an edit down. `.indent` decides what Enter puts on the next line (continuing a list, say).
+- Edit from code as the user would: `bare_doc_insert`, `bare_doc_wrap(doc, "**", "**")`, `bare_doc_select`,
+  `bare_doc_undo`; read with `bare_doc_text`, `bare_doc_line`, `bare_doc_caret`.
+
+`examples/code.c` is a C editor with highlighting and a 1M-line log; `examples/write/` is a Markdown and plain text
+editor with a live preview.
+
+### Widgets
+
+One call each, themed, focusable (Tab, then Space or Enter):
+
+```c
+if (bare_button("Save", .style = &bare_theme()->primary).clicked) save();
+bare_checkbox("Wrap lines", &wrap);                          /* true when toggled */
+bare_slider(&volume, 0, 100, .width = 240);                  /* drag it, or the arrow keys */
+for (int i = 0; i < n; i++)
+    if (bare_list_item(names[i], i == sel, .id = BARE_IDI("item", i)).clicked) sel = i;
+```
+
+They take any box option (`.width`, `.style`, `.hover`...), and they're built only from the elements above, so
+copying one into your app to change it is fine. `examples/widgets.c` has them all.
+
+### Opening and saving files
+
+`bare_file_dialog` shows the system's open, save or folder dialog. It doesn't block: the app keeps drawing, and the
+answer comes back in a later frame from `bare_file_chosen` (`""` if the user cancelled).
+
+```c
+if (bare_button("Open").clicked)
+    bare_file_dialog(BARE_ID("open"), BARE_FILE_OPEN, "Markdown:md;markdown|Text:txt", NULL);
+const char *path = bare_file_chosen(BARE_ID("open"));
+if (path && *path) open_file(path);
+```
+
 ## 11. Movement
 
 Set the new value and say how to get there; Bare animates to it:
@@ -716,7 +788,10 @@ and `bench/` measures it against the same simulation running in Edge.
 | virtual list (react-window) | `bare_visible(i, count, item_size) { ... }` |
 | `class="card"` | `.style = &card` (a `BareBox`; text: a `BareTextStyle`) |
 | CSS variables, light/dark themes | `bare_theme()->accent`, `bare_set_theme(bare_theme_light())` |
-| `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
+| `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` |
+| `<b>`, `<i>`, `<span>`, `font-weight`, `text-shadow` | `bare_paragraph` + `bare_span`, `.weight`, `.italic`, `.shadow` |
+| CodeMirror / Monaco | `bare_editor(doc, ...)` on a `BareDoc` |
+| `<input type=file>` | `bare_file_dialog` + `bare_file_chosen` |
 
 ## 15. Debugging
 
@@ -737,6 +812,7 @@ and `bench/` measures it against the same simulation running in Edge.
 
 ## 16. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
-(M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `styles.c`, `editor.c`, `glass_motion/` and `fluid/` today.
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): next a second backend and the browser (M9), then
+the rest of what CSS has (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in
+`examples/` grow with it: `hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
+`scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/` and `fluid/` today.

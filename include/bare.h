@@ -1,7 +1,7 @@
 /*
  * bare.h: the whole public API of Bare, a small native UI framework in C11.
  *
- * Parts marked (M8)...(M9) aren't implemented yet; see docs/ROADMAP.md.
+ * See docs/ROADMAP.md for what's planned.
  *
  * The simplest program:
  *
@@ -47,7 +47,7 @@
  *         bare_quit();
  *     }
  *
- * (From M8 the button is one line: `if (bare_button("Save").clicked) save();`)
+ * (The button is also one line: `if (bare_button("Save").clicked) save();`)
  *
  * Rules of the API:
  *   - Elements take named, optional parameters (C11 designated initializers).
@@ -281,8 +281,22 @@ typedef struct BareAnim {
 typedef uint32_t BareFont;    /* 0 = the built-in default font */
 typedef uint32_t BareImage;   /* 0 = no image */
 
+/* Built in: the default font is Inter (regular, semibold, bold, italic, bold
+ * italic); BARE_MONO is JetBrains Mono (regular, bold), for code. */
+#define BARE_MONO ((BareFont)1)
+#define BARE_SANS ((BareFont)0xFFFFFFFFu)   /* the default sans (Inter) where 0 means another default (bare_editor) */
+
+/* .weight: CSS font weights (100..900); the nearest face the font's family
+ * has is used. BARE_REGULAR counts as set (it overrides a style's bold). */
+enum { BARE_REGULAR = 400, BARE_MEDIUM = 500, BARE_SEMIBOLD = 600, BARE_BOLD = 700 };
+
 BareFont  bare_font_load(const char *path);                       /* TTF/OTF; 0 (the default font) on failure */
 BareFont  bare_font_from_memory(const void *data, int size);      /* data must outlive the font */
+/* Makes `face` the bold / italic / ... of `family`, so text in `family` with
+ * that .weight / .italic uses it:
+ *     BareFont serif = bare_font_load("Serif.ttf");
+ *     bare_font_add_face(serif, bare_font_load("Serif-Bold.ttf"), BARE_BOLD, false); */
+void      bare_font_add_face(BareFont family, BareFont face, int weight, bool italic);
 BareImage bare_image_load(const char *path);                      /* PNG, JPEG, BMP, GIF, TGA; 0 on failure */
 BareImage bare_image_from_pixels(int width, int height, const void *rgba8);  /* pixels are copied */
 void      bare_image_free(BareImage image);                       /* images and canvases */
@@ -413,9 +427,12 @@ typedef enum BareTransform { BARE_TRANSFORM_NONE = 0, BARE_UPPERCASE, BARE_LOWER
 typedef struct BareTextStyle {
     BareId id;
     const struct BareTextStyle *style;   /* base style: fields left at 0 come from it */
-    BareFont font;              /* 0 = default */
+    BareFont font;              /* 0 = default (Inter); BARE_MONO; or one you loaded */
     float size;                 /* 0 = default 16 */
+    int weight;                 /* BARE_BOLD, BARE_SEMIBOLD, ... (0 = the font's own) */
+    bool italic;
     BareColor color;            /* alpha 0 = inherited from the nearest .text_color (default white) */
+    BareColor background;       /* behind the glyphs, rounded (a highlight, inline code); alpha 0 = none */
     float line_height;          /* multiple of size; 0 = default 1.3 */
     BareAlign align;            /* BARE_START / CENTER / END within the line box */
     bool nowrap;                /* default: wraps at spaces and after hyphens to fit its width */
@@ -424,6 +441,8 @@ typedef struct BareTextStyle {
     bool underline, strike;     /* lines under / through the text, in its colour */
     float letter_spacing;       /* extra pixels after every character (may be negative) */
     BareTransform transform;    /* BARE_UPPERCASE / BARE_LOWERCASE (Latin) */
+    BareShadow shadow;          /* drawn under the glyphs (spread is ignored) */
+    int tab_size;               /* tab stops every this many spaces (0 = default 4) */
     float opacity;              /* 0 = default 1 */
     BarePosition position;      /* BARE_ABSOLUTE: see BareBox */
     BareAnchor anchor;
@@ -436,7 +455,8 @@ typedef struct BareTextStyle {
 typedef struct BareState {
     bool hovered;               /* the mouse is over it or one of its children */
     bool pressed;               /* a press started on it and the button is still down */
-    bool clicked;               /* pressed and released over it (this frame) */
+    bool clicked;               /* pressed and released over it (this frame); widgets: or Space / Enter while focused */
+    bool double_clicked;        /* the click was the second of a double click (clicked is true too) */
     bool right_clicked;
     bool focused;               /* it has keyboard focus */
     bool changed;               /* bare_input: the text was edited this frame */
@@ -461,6 +481,21 @@ BareState bare_this(void);
  * The default font is Inter (Latin); pass .font = bare_font_load(...) for others. */
 #define bare_text(str, ...)  bare_text_((str), &(BareTextStyle){ __VA_ARGS__ }, __FILE__, __LINE__)
 #define bare_textf(...)      bare_textf_(__FILE__, __LINE__, __VA_ARGS__)   /* printf-style, default style */
+
+/* Rich text: spans with their own font, size, weight, colour, background,
+ * underline ... flowing and wrapping together as one text element. The
+ * paragraph's options (line height, alignment, wrapping, max lines, shadow,
+ * position) are for the whole; each span's override the paragraph's.
+ *
+ *     bare_paragraph(.size = 18) {
+ *         bare_span("Hello ", .color = t->muted);
+ *         bare_span("world", .weight = BARE_BOLD);
+ *         bare_span("!", .italic = true);
+ *     }
+ *
+ * Only spans go inside the block. */
+#define bare_paragraph(...)   BARE__PARAGRAPH(BARE__CAT(bare__para_, BARE__UNIQUE), __VA_ARGS__)
+#define bare_span(...)        bare_span_(BARE__ARG1(__VA_ARGS__), &(BareTextStyle){ BARE__AFTER1(__VA_ARGS__) .id = 0 })
 
 /* Long lists: inside a scroll box, declare only the items on screen. Items
  * are `size` pixels long along the box's direction (its .gap is added); Bare
@@ -538,6 +573,13 @@ typedef enum BareEditAction {
     BARE_EDIT_TAB,                                  /* types a tab (multiline .tabs only; else Tab moves focus) */
     BARE_EDIT_BLUR,                                 /* Escape: leaves the field */
     BARE_EDIT_OVERWRITE,                            /* Insert: typing replaces instead of inserting */
+    /* bare_editor only (see BareEditor for the keys) */
+    BARE_EDIT_FIND, BARE_EDIT_REPLACE, BARE_EDIT_FIND_NEXT, BARE_EDIT_FIND_PREV, BARE_EDIT_GOTO_LINE,
+    BARE_EDIT_SELECT_NEXT_MATCH, BARE_EDIT_SELECT_ALL_MATCHES,
+    BARE_EDIT_ADD_CARET_UP, BARE_EDIT_ADD_CARET_DOWN,
+    BARE_EDIT_MOVE_LINE_UP, BARE_EDIT_MOVE_LINE_DOWN, BARE_EDIT_COPY_LINE_UP, BARE_EDIT_COPY_LINE_DOWN,
+    BARE_EDIT_DELETE_LINE, BARE_EDIT_LINE_BELOW, BARE_EDIT_LINE_ABOVE, BARE_EDIT_SELECT_LINE,
+    BARE_EDIT_INDENT, BARE_EDIT_OUTDENT, BARE_EDIT_COMMENT,
     BARE_EDIT_ACTION_COUNT_
 } BareEditAction;
 
@@ -555,6 +597,110 @@ void   bare_edit_bind(int key, int mods, BareEditAction action);
  * the keys it uses don't reach bare_key_pressed / bare_key_down. */
 void   bare_focus(BareId id);                  /* 0 blurs */
 BareId bare_focused(void);                     /* 0 = nothing */
+
+/* ------------------------------------------------------------------------ */
+/* Documents and the code / text editor                                     */
+/* ------------------------------------------------------------------------ */
+
+/* A document: text Bare owns, made for editors (bare_editor). Stored as lines
+ * (a loaded file isn't copied until a line changes), so a file of a million
+ * lines opens at once; keeps its line endings (LF or CRLF) and a UTF-8 BOM;
+ * invalid UTF-8 is shown as U+FFFD but saved back unchanged. It holds the
+ * editor's selections (any number: multiple carets) and the undo history, so
+ * an app can edit it like the user does. Use one editor per document. */
+typedef struct BareDoc BareDoc;
+typedef struct BareTextPos { int line, col; } BareTextPos;   /* col: byte offset in the line */
+
+BareDoc    *bare_doc_create(void);
+BareDoc    *bare_doc_load(const char *path);               /* NULL if it can't be read */
+bool        bare_doc_save(BareDoc *doc, const char *path); /* in its line endings; true on success */
+void        bare_doc_free(BareDoc *doc);
+void        bare_doc_set_text(BareDoc *doc, const char *text, int len);   /* len < 0: up to the NUL; clears undo */
+const char *bare_doc_text(BareDoc *doc, int *len);         /* all of it, '\n' breaks; valid until it changes */
+int         bare_doc_lines(const BareDoc *doc);
+const char *bare_doc_line(const BareDoc *doc, int line, int *len);   /* no line break, not NUL-terminated */
+bool        bare_doc_modified(const BareDoc *doc);         /* differs from what was loaded or saved (undo-aware) */
+uint64_t    bare_doc_version(const BareDoc *doc);          /* goes up with every change */
+bool        bare_doc_crlf(const BareDoc *doc);             /* saves with \r\n (as it was loaded) */
+void        bare_doc_set_crlf(BareDoc *doc, bool crlf);
+
+/* Editing as the user would: each call is one undo step over every selection. */
+void        bare_doc_insert(BareDoc *doc, const char *text);    /* replaces each selection */
+void        bare_doc_wrap(BareDoc *doc, const char *before, const char *after);   /* around each selection */
+void        bare_doc_toggle_prefix(BareDoc *doc, const char *prefix);   /* on the selected lines ("# ", "// ") */
+void        bare_doc_select(BareDoc *doc, BareTextPos anchor, BareTextPos caret);   /* one selection */
+BareTextPos bare_doc_caret(const BareDoc *doc);             /* the main caret */
+int         bare_doc_selections(const BareDoc *doc);        /* how many carets */
+const char *bare_doc_selected(BareDoc *doc, int *len);      /* the main selection's text; valid until it changes */
+bool        bare_doc_undo(BareDoc *doc);
+bool        bare_doc_redo(BareDoc *doc);
+
+enum { BARE_FIND_CASE = 1, BARE_FIND_WORD = 2 };            /* match case, whole words */
+/* The next match of `query` (one line, no breaks) at or after `from`. */
+bool        bare_doc_find(const BareDoc *doc, const char *query, int flags, BareTextPos from,
+                          BareTextPos *start, BareTextPos *end);
+
+/* A highlighter colours one line at a time: it reads the line and the state
+ * the previous line ended in (*state, 0 at the top; e.g. "inside a block
+ * comment"), writes spans, sorted and not overlapping (gaps are plain), sets
+ * *state for the next line and returns how many spans it wrote (at most
+ * `cap`). Bare keeps each line's end state and re-runs it only from an edit
+ * down, and only as far as is shown. */
+typedef struct BareHighlight {
+    int start, end;             /* bytes in the line */
+    BareColor color;            /* alpha 0 = the editor's text colour */
+    BareColor background;
+    int weight;                 /* BARE_BOLD ... */
+    bool italic, underline, strike;
+} BareHighlight;
+typedef int (*BareHighlighter)(void *user, const char *line, int len, int *state, BareHighlight *out, int cap);
+
+/* What Enter puts at the start of the new line (the default: the current
+ * line's indentation). Writes at most `cap` bytes, returns how many. */
+typedef int (*BareIndenter)(void *user, const char *line, int len, int col, char *out, int cap);
+
+/* The editor: what a code editor or a notes app needs, built in. Only the
+ * lines on screen are laid out and drawn, so huge files scroll at full rate.
+ *   - every bare_input shortcut, plus: Ctrl+D selects the next match, Ctrl+
+ *     Shift+L all of them, Alt+click adds a caret, Ctrl+Alt+Up / Down add one
+ *     above / below, Alt+drag selects a column; edits go to every caret
+ *   - Alt+Up / Down move lines, Shift+Alt+Up / Down copy them, Ctrl+Shift+K
+ *     deletes a line, Ctrl+Enter / Ctrl+Shift+Enter open a line below / above,
+ *     Ctrl+L selects a line, Tab / Shift+Tab indent and outdent, Ctrl+/
+ *     toggles .comment
+ *   - Ctrl+F find (match case, whole word), Ctrl+H replace, F3 / Shift+F3,
+ *     Enter / Shift+Enter in the find bar, Ctrl+G go to line; matches shown
+ *   - auto-indent, .auto_close pairs, bracket matching, line numbers, soft
+ *     wrap, visible whitespace, a ruler, the current line highlighted
+ * (macOS: Cmd for Ctrl.)
+ *
+ *     static BareDoc *doc;
+ *     if (!doc) doc = bare_doc_load("notes.txt");
+ *     bare_editor(doc, .line_numbers = true, .wrap = true);
+ */
+typedef struct BareEditor {
+    BareId id;                      /* default: from the call site */
+    const BareBox *style;           /* the box (default: the theme's .input look) */
+    float width, height;            /* default: BARE_GROW both */
+    BareFont font;                  /* default: BARE_MONO */
+    float size;                     /* text size (default 14) */
+    float line_height;              /* multiple of size (default 1.5) */
+    int tab_size;                   /* columns (default 4) */
+    bool spaces;                    /* Tab inserts spaces */
+    bool line_numbers, wrap, highlight_line, whitespace, read_only;
+    float ruler;                    /* a line at this column (0 = none) */
+    const char *comment;            /* Ctrl+/ toggles this line prefix, e.g. "// " */
+    const char *auto_close;         /* pairs typed together, e.g. "()[]{}\"\"" */
+    BareHighlighter highlight;  void *highlight_user;
+    BareIndenter indent;        void *indent_user;
+    BareColor color;                /* text (alpha 0 = the theme's) */
+    BareColor caret, selection;     /* alpha 0 = the theme's */
+    int id_;                        /* internal: keeps the macro's braces non-empty */
+} BareEditor;
+
+/* (doc, ...) */
+#define bare_editor(...) \
+    bare_editor_(BARE__ARG1(__VA_ARGS__), &(BareEditor){ BARE__AFTER1(__VA_ARGS__) .id_ = 0 }, __FILE__, __LINE__)
 
 /* ------------------------------------------------------------------------ */
 /* Styles and themes                                                        */
@@ -605,15 +751,30 @@ const BareTheme *bare_theme_dark(void);
 const BareTheme *bare_theme_light(void);
 
 /* ------------------------------------------------------------------------ */
-/* Widgets (M8): one call each, built only from the elements above          */
+/* Widgets: one call each, built only from the elements above              */
 /* ------------------------------------------------------------------------ */
 
-#define bare_button(label, ...)          bare_button_((label), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__)
-#define bare_checkbox(label, value, ...) bare_checkbox_((label), (value), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__)
-#define bare_slider(value, lo, hi, ...)  bare_slider_((value), (lo), (hi), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__)
-/* Lists: a bare_column(.scroll = BARE_SCROLL_Y) of items with BARE_IDI ids;
- * bare_list_item gives the standard hover/selected look. */
-#define bare_list_item(label, selected, ...) bare_list_item_((label), (selected), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__)
+/* Each takes a BareBox of options: .style replaces the theme's look, fields
+ * set on the call override it. All are focusable (Tab), and pressed by Space
+ * (buttons and list items by Enter too).
+ *
+ *     if (bare_button("Save", .style = &bare_theme()->primary).clicked) save();
+ *     bare_checkbox("Wrap lines", &wrap);                // true when toggled
+ *     bare_slider(&volume, 0, 100, .width = 240);        // true when moved; drag, or arrows
+ *     for (int i = 0; i < n; i++)
+ *         if (bare_list_item(names[i], i == sel, .id = BARE_IDI("item", i)).clicked) sel = i;
+ */
+/* (label, ...) */
+#define bare_button(...)     bare_button_(BARE__ARG1(__VA_ARGS__), &(BareBox){ BARE__AFTER1(__VA_ARGS__) .dir = 0 }, __FILE__, __LINE__)
+/* (label, bool *value, ...) */
+#define bare_checkbox(...)     bare_checkbox_(BARE__ARG1(__VA_ARGS__), BARE__ARG2(__VA_ARGS__), &(BareBox){ BARE__AFTER2(__VA_ARGS__) .dir = 0 },                    __FILE__, __LINE__)
+/* (float *value, lo, hi, ...) */
+#define bare_slider(...)     bare_slider_(BARE__ARG1(__VA_ARGS__), BARE__ARG2(__VA_ARGS__), BARE__ARG3(__VA_ARGS__),                  &(BareBox){ BARE__AFTER3(__VA_ARGS__) .dir = 0 }, __FILE__, __LINE__)
+/* Lists: a bare_column(.scroll = BARE_SCROLL_Y) of items with BARE_IDI ids
+ * (bare_visible for long ones); bare_list_item gives the hover and selected
+ * looks and fills the list's width. */
+/* (label, bool selected, ...) */
+#define bare_list_item(...)     bare_list_item_(BARE__ARG1(__VA_ARGS__), BARE__ARG2(__VA_ARGS__), &(BareBox){ BARE__AFTER2(__VA_ARGS__) .dir = 0 },                     __FILE__, __LINE__)
 
 /* ------------------------------------------------------------------------ */
 /* Window, frame loop, input                                                */
@@ -637,9 +798,24 @@ void  bare_quit(void);                  /* closes the window, frees everything *
 void  bare_background(BareColor color); /* window clear colour (default: the theme's background) */
 void  bare_title(const char *title);
 BareVec2 bare_window_size(void);
+
+/* The system's file dialogs. They don't block: the app keeps drawing, and
+ * the answer arrives in a later frame, when bare_file_chosen(id) returns the
+ * path (for that one frame; "" if the user cancelled, NULL otherwise).
+ * filters: "Markdown:md;markdown|Text:txt" (NULL: any file); path: where it
+ * opens, or the suggested name to save as.
+ *
+ *     if (bare_button("Open").clicked) bare_file_dialog(BARE_ID("open"), BARE_FILE_OPEN, "Text:txt", NULL);
+ *     const char *p = bare_file_chosen(BARE_ID("open"));
+ *     if (p && *p) load(p);
+ */
+typedef enum BareFileDialog { BARE_FILE_OPEN, BARE_FILE_SAVE, BARE_FILE_FOLDER } BareFileDialog;
+void        bare_file_dialog(BareId id, BareFileDialog kind, const char *filters, const char *path);
+const char *bare_file_chosen(BareId id);
 float bare_pixel_scale(void);          /* physical pixels per logical pixel (devicePixelRatio) */
 void  bare_continuous(bool on);         /* redraw every frame even when idle (games, video) */
 void  bare_wake(void);                  /* thread-safe: ask for a frame (e.g. data arrived) */
+void  bare_wake_in(float seconds);      /* a frame this many seconds from now (a timed fade); idle until then */
 
 double bare_time(void);                 /* seconds since bare_window */
 float  bare_dt(void);                   /* seconds since the previous frame */
@@ -692,6 +868,25 @@ void        bare_set_clipboard(const char *text);
 #define BARE__CONTAINER(...) BARE__CONTAINER_(BARE__CAT(bare__open_, BARE__UNIQUE), __VA_ARGS__)
 #define BARE__CONTAINER_(v, ...) \
     for (int v = bare_open_(&(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__); v; v = bare_close_())
+#define BARE__PARAGRAPH(v, ...)     for (int v = bare_paragraph_(&(BareTextStyle){ __VA_ARGS__ }, __FILE__, __LINE__); v; v = bare_paragraph_end_())
+/* Calls with no options, like bare_button("Save") or bare_span("text"):
+ * the leading arguments are picked out of __VA_ARGS__ and the options after
+ * them go into the braces, ended by a field the call never sets (so the
+ * braces are never empty, which C11 forbids). BARE__X re-scans for MSVC's
+ * traditional preprocessor. */
+#define BARE__X(x)                   x
+#define BARE__ARG1(...)              BARE__X(BARE__ARG1_(__VA_ARGS__, 0))
+#define BARE__ARG1_(a, ...)          a
+#define BARE__ARG2(...)              BARE__X(BARE__ARG2_(__VA_ARGS__, 0, 0))
+#define BARE__ARG2_(a, b, ...)       b
+#define BARE__ARG3(...)              BARE__X(BARE__ARG3_(__VA_ARGS__, 0, 0, 0))
+#define BARE__ARG3_(a, b, c, ...)    c
+#define BARE__AFTER1(...)            BARE__X(BARE__AFTER1_(__VA_ARGS__, ))
+#define BARE__AFTER1_(a, ...)        __VA_ARGS__
+#define BARE__AFTER2(...)            BARE__X(BARE__AFTER2_(__VA_ARGS__, ))
+#define BARE__AFTER2_(a, b, ...)     __VA_ARGS__
+#define BARE__AFTER3(...)            BARE__X(BARE__AFTER3_(__VA_ARGS__, ))
+#define BARE__AFTER3_(a, b, c, ...)  __VA_ARGS__
 
 BareState bare_box_(const BareBox *box, const char *file, int line);
 BareImage bare_canvas_(const BareCanvas *canvas);
@@ -699,9 +894,13 @@ void      bare_pass_(const BarePass *pass, const char *file, int line);
 int       bare_open_(const BareBox *box, const char *file, int line);   /* returns 1 */
 int       bare_close_(void);                                            /* returns 0 */
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line);
+int       bare_paragraph_(const BareTextStyle *style, const char *file, int line);   /* returns 1 */
+int       bare_paragraph_end_(void);                                                 /* returns 0 */
+void      bare_span_(const char *text, const BareTextStyle *style);
 int       bare_visible_(int count, float size, const char *file, int line);   /* the first item on screen */
 int       bare_visible_more_(int i);
 BareState bare_input_(char *buf, int cap, const BareInput *input, const char *file, int line);
+BareState bare_editor_(BareDoc *doc, const BareEditor *editor, const char *file, int line);
 #if defined(__GNUC__)
 __attribute__((format(printf, 3, 4)))
 #endif

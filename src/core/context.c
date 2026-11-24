@@ -44,6 +44,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     ctx->log = log_stderr;
     ctx->wake_at = -1;
     ctx->window_focused = true;
+    ctx->para_elem = -1;
 #ifdef __APPLE__
     ctx->mac_keys = true;
 #endif
@@ -127,4 +128,10 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
     ctx->in_frame = false;
     ctx->frame_index++;
     return &ctx->list;
+}
+
+/* A frame later on, for something timed (a message that fades after a while). */
+void bare_wake_in(float seconds) {
+    BareContext *ctx = bare_ctx_current();
+    if (ctx) bare__want_frame_at(ctx, ctx->time + (seconds > 0 ? seconds : 0));
 }

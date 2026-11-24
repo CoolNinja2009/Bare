@@ -25,11 +25,16 @@ bare_box(.width = 520, .height = 96, .radius = 48, .glass = BARE_GLASS);
 And canvases for your own shaders, like `<canvas>` + WebGL: [examples/fluid](examples/fluid) is a GPU fluid
 simulation with a frosted settings panel built from Bare boxes.
 
+And text editing built in, from a one-line field to a code editor with multiple carets and find / replace:
+[examples/write](examples/write) is a Markdown and plain text editor on liquid glass, in under 1,000 lines of C.
+
 ## Status
 
 Early. Done: GPU renderer (SDL3), rounded boxes, borders and shadows, liquid glass, flexbox layout, hover / press /
 click / keys, canvases and custom shaders, animation (easing and springs), text (wrapped, kerned, sharp at any DPI,
-with a built-in font) and images. Next: clipping and scrolling. See [docs/ROADMAP.md](docs/ROADMAP.md).
+rich text in several weights, built-in sans and mono fonts) and images, clipping and scrolling, styles and themes,
+keyboard focus, text fields, a full text / code editor, widgets and the system's file dialogs. Next: the sokol
+backend (WebAssembly) and web parity. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Measured against the same fluid simulation running in Microsoft Edge, both at 200 fps
 ([bench/README.md](bench/README.md)): about 3x less CPU, 4-5x less memory, 1 process instead of 8-18, and 0% CPU and
@@ -56,3 +61,6 @@ Bare is created by CoolN and [Claude](https://www.anthropic.com/news/introducing
 
 `examples/fluid` is a port of [WebGL Fluid Simulation](https://github.com/PavelDoGreat/WebGL-Fluid-Simulation)
 by Pavel Dobryakov (MIT licence, see [examples/fluid/LICENSE.txt](examples/fluid/LICENSE.txt)).
+
+The built-in fonts are [Inter](https://github.com/rsms/inter) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono),
+both under the SIL Open Font License (see [assets/fonts](assets/fonts)).

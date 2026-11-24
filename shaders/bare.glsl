@@ -15,7 +15,7 @@ layout(location = 3) in vec4 i_border_color;
 layout(location = 4) in vec4 i_shadow_color;
 layout(location = 5) in vec4 i_shadow;        // offset x, offset y, blur, spread
 layout(location = 6) in vec4 i_uv;            // u0, v0, u1, v1
-layout(location = 7) in vec4 i_params;        // border width, mode (0 box, 1 glyph, 2 image), -, -
+layout(location = 7) in vec4 i_params;        // border width, mode (0 box, 1 glyph, 2 image), glyph blur, -
 
 layout(set = 1, binding = 0) uniform Viewport { vec4 u_viewport; };   // width, height
 
@@ -36,7 +36,7 @@ void main() {
     // Grow the quad to cover the anti-aliased edge and the shadow. Glyphs are
     // drawn exactly (their quads are pixel-aligned bitmaps).
     float margin = 1.0;
-    if (i_params.y > 0.5 && i_params.y < 1.5) margin = 0.0;
+    if (i_params.y > 0.5 && i_params.y < 1.5) margin = i_params.z > 0.0 ? 1.5 * i_params.z + 2.0 : 0.0;
     if (i_shadow_color.a > 0.0) {
         float sigma = i_shadow.z * 0.5;
         margin = max(margin, i_shadow.w + 3.0 * sigma + max(abs(i_shadow.x), abs(i_shadow.y)) + 1.0);
@@ -98,6 +98,25 @@ void main() {
     int mode = int(v_params.y + 0.5);
 
     if (mode == 1) {   // glyph: R8 coverage from the atlas
+        float blur = v_params.z;
+        if (blur > 0.0) {
+            // A text shadow: the glyph's coverage blurred by a Gaussian of
+            // sigma = blur / 2, sampled only inside its own atlas cell.
+            vec2 duv = (v_uv.zw - v_uv.xy) / max(v_rect.zw, vec2(1.0));
+            float sigma = blur * 0.5, sum = 0.0, wsum = 0.0;
+            for (int j = -3; j <= 3; j++) {
+                for (int i = -3; i <= 3; i++) {
+                    vec2 o = vec2(float(i), float(j)) * sigma * 0.75;
+                    float w = exp(-dot(o, o) / (2.0 * sigma * sigma));
+                    vec2 q = uv + o * duv;
+                    float inside = step(v_uv.x, q.x) * step(q.x, v_uv.z) * step(v_uv.y, q.y) * step(q.y, v_uv.w);
+                    sum += w * texture(u_tex, q).r * inside;
+                    wsum += w;
+                }
+            }
+            o_color = premul(v_fill) * (sum / wsum);
+            return;
+        }
         o_color = premul(v_fill) * texture(u_tex, uv).r;
         return;
     }

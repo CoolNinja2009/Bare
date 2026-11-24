@@ -32,13 +32,13 @@ struct BareEditState {
     int      drag_a, drag_b;    /* the word or line first clicked */
 };
 
-typedef struct BareEditor BareEditor;
-struct BareEditor {             /* one field, this frame */
+typedef struct BareEditCtx BareEditCtx;
+struct BareEditCtx {             /* one field, this frame */
     BareContext   *ctx;
     BareEditState *ed;
     char          *buf;  int len, cap;    /* cap: bytes the text may use (the NUL excluded) */
     bool           multiline, password, tabs, read_only;
-    BareText    *(*layout)(BareEditor *e);   /* the text as shown, wrapped at box_w; NULL if unknown */
+    BareText    *(*layout)(BareEditCtx *e);   /* the text as shown, wrapped at box_w; NULL if unknown */
     void          *user;
     float          box_w;       /* text width, logical pixels */
     float          page_h;      /* visible height, for PageUp / PageDown */
@@ -50,10 +50,12 @@ uint64_t bare__edit_hash(const char *s, int len);
 int  bare__edit_next(const char *s, int len, int at);   /* the next code point boundary */
 int  bare__edit_prev(const char *s, int at);
 void bare__edit_word_at(const char *s, int len, int at, int *a, int *b);   /* the run (word, spaces, ...) under at */
-void bare__edit_run(BareEditor *e, BareEditAction action, bool extend);
-void bare__edit_type(BareEditor *e, const char *text, int n);
-void bare__edit_select(BareEditor *e, int anchor, int caret, bool upstream);
+int  bare__edit_word_left(const char *s, int at);                    /* Ctrl+Left from at (stops at a line start) */
+int  bare__edit_word_right(const char *s, int len, int at, bool mac);  /* Ctrl+Right (macOS: Option+Right) */
+void bare__edit_run(BareEditCtx *e, BareEditAction action, bool extend);
+void bare__edit_type(BareEditCtx *e, const char *text, int n);
+void bare__edit_select(BareEditCtx *e, int anchor, int caret, bool upstream);
 void bare__edit_forget(BareEditState *ed);   /* the app replaced the text: no undo, no composition */
-void bare__edit_set_comp(BareEditor *e, const char *text, int n, int cursor);
+void bare__edit_set_comp(BareEditCtx *e, const char *text, int n, int cursor);
 
 #endif

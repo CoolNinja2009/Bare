@@ -8,6 +8,8 @@
  * - formatting: underline, strike, letter spacing, upper case, opacity, and
  *   text cut to two lines or one with an ellipsis
  * - a "NEW" badge pinned to the card's corner with .position = BARE_ABSOLUTE
+ * - weights, italics, the built-in monospace font, a soft text shadow, and
+ *   rich text: spans of their own style wrapping together as one paragraph
  * - hover the paragraph: a liquid glass loupe magnifies the text under it */
 #include "bare.h"
 
@@ -35,7 +37,8 @@ static BareState page(BareImage avatar, int *clicks) {
     bare_row(.width = BARE_GROW, .height = BARE_GROW, .padding = 40, .gap = 32) {
         /* The text column. */
         bare_column(.width = BARE_GROW, .gap = 22) {
-            bare_text("Text, at last", .size = 44);
+            bare_text("Text, at last", .size = 44, .weight = BARE_BOLD,
+                      .shadow = { 0, 4, 14, 0, BARE_RGBA(70, 110, 245, 160) });
             para = bare_text(about, .size = 17, .line_height = 1.5f, .color = BARE_RGB(185, 190, 205));
 
             bare_row(.gap = 14, .align = BARE_END) {
@@ -58,6 +61,30 @@ static BareState page(BareImage avatar, int *clicks) {
                 bare_text("Spaced capitals", .size = 13, .letter_spacing = 2.5f, .transform = BARE_UPPERCASE,
                           .color = BARE_RGB(120, 170, 255));
                 bare_text("Half opacity", .size = 15, .opacity = 0.5f);
+            }
+            bare_row(.gap = 22, .align = BARE_CENTER) {
+                bare_text("Regular", .size = 15);
+                bare_text("Semibold", .size = 15, .weight = BARE_SEMIBOLD);
+                bare_text("Bold", .size = 15, .weight = BARE_BOLD);
+                bare_text("Italic", .size = 15, .italic = true);
+                bare_text("Bold italic", .size = 15, .weight = BARE_BOLD, .italic = true);
+                bare_text("int main(void);", .size = 14, .font = BARE_MONO);
+            }
+            bare_paragraph(.size = 16, .line_height = 1.5f, .color = BARE_RGB(185, 190, 205)) {
+                bare_span("Rich text: ", .weight = BARE_SEMIBOLD, .color = BARE_RGB(255, 255, 255));
+                bare_span("spans of ");
+                bare_span("bold", .weight = BARE_BOLD);
+                bare_span(", ");
+                bare_span("italic", .italic = true);
+                bare_span(", ");
+                bare_span("inline code", .font = BARE_MONO, .size = 14, .background = BARE_RGBA(255, 255, 255, 22));
+                bare_span(", a ");
+                bare_span("link", .color = BARE_RGB(120, 170, 255), .underline = true);
+                bare_span(", ");
+                bare_span("bigger", .size = 24, .weight = BARE_BOLD);
+                bare_span(" and ");
+                bare_span("marked", .background = BARE_RGBA(255, 200, 60, 90));
+                bare_span(" words wrap together as one paragraph, like inline elements in HTML.");
             }
             bare_text(about, .size = 15, .max_lines = 2, .ellipsis = true, .color = BARE_RGB(150, 155, 170));
             bare_text(about, .size = 15, .nowrap = true, .ellipsis = true, .color = BARE_RGB(150, 155, 170));

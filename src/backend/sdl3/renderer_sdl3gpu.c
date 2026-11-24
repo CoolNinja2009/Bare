@@ -435,7 +435,7 @@ static void build(const BareDrawList *list) {
                 set4(in->rect, gl->dst.x, gl->dst.y, gl->dst.w, gl->dst.h);
                 set4(in->uv, gl->uv.x, gl->uv.y, gl->uv.x + gl->uv.w, gl->uv.y + gl->uv.h);
                 color4(in->fill, t->color);
-                set4(in->params, 0, 1, 0, 0);
+                set4(in->params, 0, 1, t->blur, 0);
             }
             break;
         }

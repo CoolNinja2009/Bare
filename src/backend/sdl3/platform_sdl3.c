@@ -17,6 +17,10 @@ typedef struct SdlPlatform {
     char       *clipboard;
     BareTextInputKind text_kind;   /* text input is on (and of this kind) */
     TextChunk  *text;              /* copies of this poll's text events */
+    Uint32      file_event;        /* a dialog's answer, pushed from whatever thread SDL calls back on */
+    char       *chosen;            /* the last answer's path, freed at the next poll */
+    SDL_DialogFileFilter filters[16];
+    char        filter_text[1024]; /* what `filters` point into: SDL reads them until the dialog closes */
 } SdlPlatform;
 
 static SdlPlatform sdl;
@@ -238,6 +242,15 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         return true;
     }
     default:
+        if (e->type == sdl.file_event && sdl.file_event) {
+            SDL_free(sdl.chosen);
+            sdl.chosen = e->user.data2;
+            out->kind = BARE_EVENT_FILE_CHOSEN;
+            SDL_memcpy(&out->as.file.request, e->user.data1, sizeof(uint64_t));
+            SDL_free(e->user.data1);
+            out->as.file.path = sdl.chosen;
+            return true;
+        }
         if (e->type == sdl.wake_event) {
             out->kind = BARE_EVENT_EXPOSE;
             return true;
@@ -328,6 +341,44 @@ static void *native(void *self, BareNativeKind what) {
     return what == BARE_NATIVE_SDL_WINDOW ? sdl.window : NULL;
 }
 
+/* SDL may call back on another thread: the answer travels as an event. */
+static void dialog_done(void *user, const char *const *files, int filter) {
+    (void)filter;
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = sdl.file_event;
+    e.user.data1 = user;   /* the request id, on the heap */
+    e.user.data2 = files && files[0] ? SDL_strdup(files[0]) : NULL;
+    SDL_PushEvent(&e);
+}
+
+static void file_dialog(void *self, uint64_t request, int kind, const char *filters, const char *path) {
+    (void)self;
+    if (!sdl.file_event) sdl.file_event = SDL_RegisterEvents(1);
+    uint64_t *id = SDL_malloc(sizeof *id);
+    if (!sdl.file_event || !id) { SDL_free(id); return; }
+    *id = request;
+    /* "Name:ext;ext|Name:ext" -> SDL's filters, kept until the dialog closes */
+    int n = 0;
+    SDL_strlcpy(sdl.filter_text, filters ? filters : "", sizeof sdl.filter_text);
+    for (char *s = sdl.filter_text; *s && n < 16;) {
+        char *end = SDL_strchr(s, '|'), *colon;
+        if (end) *end = 0;
+        colon = SDL_strchr(s, ':');
+        if (colon) {
+            *colon = 0;
+            sdl.filters[n].name = s;
+            sdl.filters[n].pattern = colon + 1;
+            n++;
+        }
+        if (!end) break;
+        s = end + 1;
+    }
+    if (kind == 1) SDL_ShowSaveFileDialog(dialog_done, id, sdl.window, n ? sdl.filters : NULL, n, path);
+    else if (kind == 2) SDL_ShowOpenFolderDialog(dialog_done, id, sdl.window, path, false);
+    else SDL_ShowOpenFileDialog(dialog_done, id, sdl.window, n ? sdl.filters : NULL, n, path, false);
+}
+
 BarePlatform bare__sdl3_platform(void) {
     BarePlatform p = {
         .self = &sdl,
@@ -345,6 +396,7 @@ BarePlatform bare__sdl3_platform(void) {
         .start_text_input = start_text_input,
         .stop_text_input = stop_text_input,
         .native = native,
+        .file_dialog = file_dialog,
         .run = NULL,
     };
     return p;

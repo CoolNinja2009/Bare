@@ -649,6 +649,62 @@ TEST(text_opacity_and_absolute_position) {
     CHECK_NEAR(e->opacity, 0.5f, 1e-4);
 }
 
+TEST(weight_and_italic_pick_the_family_face) {
+    fresh(false);
+    BareFont semi = bare_font_from_memory("FAKE", 4), bold = bare_font_from_memory("FAKE", 4);
+    BareFont italic = bare_font_from_memory("FAKE", 4);
+    bare_font_add_face(fake, bold, BARE_BOLD, false);
+    bare_font_add_face(fake, semi, BARE_SEMIBOLD, false);
+    bare_font_add_face(fake, italic, BARE_REGULAR, true);
+    begin(1);
+    bare_text("a", .font = fake, .size = 10);
+    bare_text("b", .font = fake, .size = 10, .weight = BARE_BOLD);
+    bare_text("c", .font = fake, .size = 10, .weight = 800);          /* nearest heavier: bold */
+    bare_text("d", .font = fake, .size = 10, .weight = BARE_MEDIUM);  /* CSS: 500 takes 400 before 600 */
+    bare_text("e", .font = fake, .size = 10, .italic = true);
+    bare_ctx_end(ctx, NULL);
+    CHECK(find_text(0)->text->runs[0].font == fake);
+    CHECK(find_text(1)->text->runs[0].font == bold);
+    CHECK(find_text(2)->text->runs[0].font == bold);
+    CHECK(find_text(3)->text->runs[0].font == fake);
+    CHECK(find_text(4)->text->runs[0].font == italic);
+}
+
+TEST(spans_make_runs_in_one_flow) {
+    fresh(false);
+    BareFont bold = bare_font_from_memory("FAKE", 4);
+    bare_font_add_face(fake, bold, BARE_BOLD, false);
+    begin(1);
+    bare_column(.width = 400) {
+        bare_paragraph(.font = fake, .size = 10) {
+            bare_span("ab ");
+            bare_span("cd", .weight = BARE_BOLD, .color = BARE_RGB(255, 0, 0));
+            bare_span(" ef", .size = 20);
+        }
+    }
+    bare_ctx_end(ctx, NULL);
+    const BareText *t = find_text(0)->text;
+    CHECK(t->run_count == 3 && t->line_count == 1);
+    CHECK(t->runs[1].start == 3 && t->runs[1].font == bold && t->runs[1].color.r == 255);
+    CHECK(t->runs[2].start == 5 && t->runs[2].size == 20);
+    CHECK_NEAR(find_text(0)->rect.w, 5 * 5 + 3 * 10, 1e-4);   /* "ab cd" at 5 px, " ef" at 10 px */
+}
+
+TEST(text_shadow_draws_first_moved_and_blurred) {
+    fresh(false);
+    begin(1);
+    bare_text("ab", .font = fake, .size = 10, .shadow = { 2, 3, 4, 0, { 0, 0, 0, 128 } });
+    const BareDrawList *l = bare_ctx_end(ctx, NULL);
+    CHECK(l->cmd_count == 2);
+    const BareTextCmd *sh = &l->cmds[0].as.text, *tx = &l->cmds[1].as.text;
+    CHECK(sh->count == 2 && tx->count == 2);
+    CHECK_NEAR(sh->blur, 4, 1e-4);
+    CHECK_NEAR(tx->blur, 0, 1e-4);
+    CHECK_NEAR(sh->glyphs[0].dst.x - tx->glyphs[0].dst.x, 2, 1e-4);
+    CHECK_NEAR(sh->glyphs[0].dst.y - tx->glyphs[0].dst.y, 3, 1e-4);
+    CHECK_NEAR(sh->color.a, 128 / 255.0f, 1e-3);
+}
+
 int main(void) {
     RUN(utf8_valid_sequences);
     RUN(utf8_invalid_bytes_become_replacement_characters);
@@ -685,6 +741,9 @@ int main(void) {
     RUN(nowrap_ellipsis_cuts_at_the_width_and_can_be_squeezed);
     RUN(emit_draws_the_ellipsis_and_lines);
     RUN(text_opacity_and_absolute_position);
+    RUN(weight_and_italic_pick_the_family_face);
+    RUN(spans_make_runs_in_one_flow);
+    RUN(text_shadow_draws_first_moved_and_blurred);
     if (ctx) bare_ctx_destroy(ctx);
     return test_report();
 }

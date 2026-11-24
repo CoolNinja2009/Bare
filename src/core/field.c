@@ -25,14 +25,14 @@ typedef struct Field {
 } Field;
 
 /* Password dots: shown offsets are three bytes per code point. */
-static int to_shown(const BareEditor *e, int at) {
+static int to_shown(const BareEditCtx *e, int at) {
     if (!e->password) return at;
     int n = 0;
     for (int i = 0; i < at && i < e->len;) { bare__utf8_decode(e->buf, e->len, &i); n++; }
     return n * 3;
 }
 
-static int from_shown(const BareEditor *e, int at) {
+static int from_shown(const BareEditCtx *e, int at) {
     if (!e->password) return at;
     int want = at / 3, i = 0;
     while (want-- > 0 && i < e->len) bare__utf8_decode(e->buf, e->len, &i);
@@ -40,7 +40,7 @@ static int from_shown(const BareEditor *e, int at) {
 }
 
 /* The buffer as shown (no composition), shaped and wrapped like last frame. */
-static BareText *layout(BareEditor *e) {
+static BareText *layout(BareEditCtx *e) {
     Field *f = e->user;
     if (f->layout && f->gen == e->gen) return f->layout;
     const char *s = e->buf;
@@ -62,7 +62,7 @@ static BareText *layout(BareEditor *e) {
 }
 
 /* The buffer offset under a window point (last frame's layout). */
-static int offset_at(BareEditor *e, BareVec2 p, bool *upstream) {
+static int offset_at(BareEditCtx *e, BareVec2 p, bool *upstream) {
     Field *f = e->user;
     *upstream = false;
     BareText *t = layout(e);
@@ -70,7 +70,7 @@ static int offset_at(BareEditor *e, BareVec2 p, bool *upstream) {
     return from_shown(e, bare__text_hit(t, p.x - f->text_rect.x, p.y - f->text_rect.y, e->box_w, upstream));
 }
 
-static void line_at(const BareEditor *e, int at, int *a, int *b) {
+static void line_at(const BareEditCtx *e, int at, int *a, int *b) {
     if (!e->multiline) { *a = 0; *b = e->len; return; }
     int lo = at, hi = at;
     while (lo > 0 && e->buf[lo - 1] != '\n') lo--;
@@ -80,13 +80,13 @@ static void line_at(const BareEditor *e, int at, int *a, int *b) {
     *b = hi;
 }
 
-static void unit_at(const BareEditor *e, int at, int unit, int *a, int *b) {
+static void unit_at(const BareEditCtx *e, int at, int unit, int *a, int *b) {
     if (unit == 2 && !e->password) bare__edit_word_at(e->buf, e->len, at, a, b);
     else if (unit >= 2) line_at(e, at, a, b);
     else *a = *b = at;
 }
 
-static void mouse(BareContext *ctx, BareEditor *e, BareId id, bool was_focused) {
+static void mouse(BareContext *ctx, BareEditCtx *e, BareId id, bool was_focused) {
     BareEditState *ed = e->ed;
     bool mine = bare__chain_has(&ctx->press[BARE__PRESS_LEFT], id);
     if (ctx->press_new && bare__chain_has(&ctx->press_began, id)) {
@@ -121,7 +121,7 @@ static void mouse(BareContext *ctx, BareEditor *e, BareId id, bool was_focused) 
     if (!ctx->held[BARE__PRESS_LEFT]) ed->drag = 0;
 }
 
-static void keys(BareContext *ctx, BareEditor *e) {
+static void keys(BareContext *ctx, BareEditCtx *e) {
     for (int i = 0; i < ctx->in_take; i++) {
         const BareKeyEv *k = &ctx->in[i];
         if (k->kind == BARE__IN_TEXT) {
@@ -143,7 +143,7 @@ static void keys(BareContext *ctx, BareEditor *e) {
 static BareColor or_default(BareColor c, BareColor d) { return c.a ? c : d; }
 
 /* The text element: what's shown, and what's drawn with it. */
-static int show(BareContext *ctx, BareEditor *e, const BareInput *in, const BareTextStyle *style, BareId text_id,
+static int show(BareContext *ctx, BareEditCtx *e, const BareInput *in, const BareTextStyle *style, BareId text_id,
                 bool focused, const char *file, int line) {
     BareEditState *ed = e->ed;
     int lo = 0, hi = 0, comp = ed && focused ? ed->comp_len : 0;
@@ -289,7 +289,7 @@ BareState bare_input_(char *buf, int cap, const BareInput *in, const char *file,
     f.style = &st;
     int tn = bare__store_find(ctx, text_id);
     if (tn >= 0) f.text_rect = ctx->store.nodes[tn].rect;
-    BareEditor e;
+    BareEditCtx e;
     memset(&e, 0, sizeof e);
     e.ctx = ctx;
     e.ed = ed;
@@ -397,14 +397,48 @@ static BareRect to_screen(BareRect local, BareRect r, float k, bool snap) {
     return o;
 }
 
+/* Fills the rows of [a, b); b past the text's end also marks its line break. */
+static void fill_range(BareContext *ctx, const BareText *t, int a, int b, BareRect r, float k, bool snap,
+                       BareColorF color) {
+    bool eol = b > t->len;
+    if (eol) b = t->len;
+    float box_w = r.w / k;
+    if (b > a) {
+        int cap = t->line_count + 1;
+        BareRect *rects = bare__arena_alloc(&ctx->frame, sizeof *rects * (size_t)cap, 8);
+        int n = rects ? bare__text_range_rects(t, a, b, box_w, rects, cap) : 0;
+        for (int i = 0; i < n; i++) bare__emit_fill(ctx, to_screen(rects[i], r, k, snap), color);
+    }
+    if (eol) {
+        BareRect c = bare__text_caret(t, t->len, false, box_w);
+        c.w = fmaxf(t->size * 0.4f, 3.0f);
+        bare__emit_fill(ctx, to_screen(c, r, k, snap), color);
+    }
+}
+
 void bare__field_emit_under(BareContext *ctx, const BareText *t, BareRect r, float k, bool snap, float opacity) {
     const BareTextDeco *d = t->deco;
-    if (!d || d->sel_a == d->sel_b || k <= 0) return;
-    int cap = t->line_count + 1;
-    BareRect *rects = bare__arena_alloc(&ctx->frame, sizeof *rects * (size_t)cap, 8);
-    if (!rects) return;
-    int n = bare__text_range_rects(t, d->sel_a, d->sel_b, r.w / k, rects, cap);
-    for (int i = 0; i < n; i++) bare__emit_fill(ctx, to_screen(rects[i], r, k, snap), color_f(d->sel_color, opacity));
+    if (!d || k <= 0) return;
+    for (int i = 0; i < d->mark_count; i++)   /* find matches, brackets */
+        fill_range(ctx, t, d->marks[i * 2], d->marks[i * 2 + 1], r, k, snap, color_f(d->mark_color, opacity));
+    if (d->sel_a != d->sel_b) fill_range(ctx, t, d->sel_a, d->sel_b, r, k, snap, color_f(d->sel_color, opacity));
+    for (int i = 0; i < d->sel_count; i++)
+        fill_range(ctx, t, d->sels[i * 2], d->sels[i * 2 + 1], r, k, snap, color_f(d->sel_color, opacity));
+}
+
+/* Dots for spaces and a dash for tabs, between the glyphs. */
+static void whitespace(BareContext *ctx, const BareText *t, BareRect r, float k, bool snap, BareColorF color) {
+    float box_w = r.w / k, dot = fmaxf(1.0f, roundf(1.6f * k)) / k;
+    for (int i = 0; i < t->len; i++) {
+        char c = t->str[i];
+        if (c != ' ' && c != '\t') continue;
+        BareRect a = bare__text_caret(t, i, false, box_w), b = bare__text_caret(t, i + 1, true, box_w);
+        if (b.y != a.y || b.x <= a.x) continue;
+        BareRect m;
+        if (c == ' ') m = (BareRect){ (a.x + b.x) * 0.5f - dot * 0.5f, a.y + a.h * 0.5f - dot * 0.5f, dot, dot };
+        else m = (BareRect){ a.x + 2.0f, a.y + a.h * 0.5f - dot * 0.5f, fmaxf(b.x - a.x - 4.0f, dot), dot };
+        bare__emit_fill(ctx, to_screen(m, r, k, snap), color);
+    }
 }
 
 void bare__field_emit_over(BareContext *ctx, const BareText *t, BareRect r, float k, bool snap, BareColorF ink) {
@@ -416,15 +450,25 @@ void bare__field_emit_over(BareContext *ctx, const BareText *t, BareRect r, floa
         int cap = t->line_count + 1;
         BareRect *rects = bare__arena_alloc(&ctx->frame, sizeof *rects * (size_t)cap, 8);
         int n = rects ? bare__text_range_rects(t, d->comp_a, d->comp_b, box_w, rects, cap) : 0;
-        float lead = (t->line_height - (t->ascent + t->descent)) * 0.5f;
         for (int i = 0; i < n; i++) {
             BareRect u = to_screen(rects[i], r, k, snap);
-            u.y = roundf(r.y + (rects[i].y + lead + t->ascent + t->descent * 0.5f) * k);
+            const BareTextLine *line = &t->lines[bare__text_line_at_y(t, rects[i].y + 0.01f)];
+            u.y = roundf(r.y + (line->y + line->asc + t->descent * 0.5f) * k);
             u.h = px;
             bare__emit_fill(ctx, u, ink);
         }
     }
-    if (!d->caret_on) return;
+    if (d->whitespace) {
+        BareColorF wc = color_f(d->whitespace_color, ink.a);
+        whitespace(ctx, t, r, k, snap, wc);
+    }
+    for (int i = 0; i < d->caret_count; i++) {   /* more carets (editors): thin, no upstream */
+        BareRect c = bare__text_caret(t, d->carets[i], false, box_w);
+        BareRect s = to_screen(c, r, k, snap);
+        s.w = px;
+        bare__emit_fill(ctx, s, d->caret_color.a ? color_f(d->caret_color, ink.a) : ink);
+    }
+    if (!d->caret_on || d->caret < 0) return;
     BareRect c = bare__text_caret(t, d->caret, d->upstream, box_w);
     if (d->block) {
         int next = bare__edit_next(t->str, t->len, d->caret);

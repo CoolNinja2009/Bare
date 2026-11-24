@@ -49,6 +49,25 @@ static const struct { uint8_t plat; int key; uint8_t mods; uint8_t action; } def
     { MAC, BARE_KEY_BACKSPACE, SC, BARE_EDIT_DELETE_LINE_LEFT },
 };
 
+/* bare_editor's own keys, looked up before the ones above while an editor has focus. */
+static const struct { uint8_t plat; int key; uint8_t mods; uint8_t action; } editor_defaults[] = {
+    { ALL, BARE_KEY_F, SC, BARE_EDIT_FIND },
+    { ALL, BARE_KEY_D, SC, BARE_EDIT_SELECT_NEXT_MATCH },  { ALL, BARE_KEY_L, SC | SH, BARE_EDIT_SELECT_ALL_MATCHES },
+    { ALL, BARE_KEY_UP, SC | AL, BARE_EDIT_ADD_CARET_UP }, { ALL, BARE_KEY_DOWN, SC | AL, BARE_EDIT_ADD_CARET_DOWN },
+    { ALL, BARE_KEY_UP, AL, BARE_EDIT_MOVE_LINE_UP },      { ALL, BARE_KEY_DOWN, AL, BARE_EDIT_MOVE_LINE_DOWN },
+    { ALL, BARE_KEY_UP, AL | SH, BARE_EDIT_COPY_LINE_UP }, { ALL, BARE_KEY_DOWN, AL | SH, BARE_EDIT_COPY_LINE_DOWN },
+    { ALL, BARE_KEY_K, SC | SH, BARE_EDIT_DELETE_LINE },
+    { ALL, BARE_KEY_ENTER, SC, BARE_EDIT_LINE_BELOW },     { ALL, BARE_KEY_ENTER, SC | SH, BARE_EDIT_LINE_ABOVE },
+    { ALL, BARE_KEY_L, SC, BARE_EDIT_SELECT_LINE },
+    { ALL, BARE_KEY_TAB, SH, BARE_EDIT_OUTDENT },
+    { ALL, BARE_KEY_RIGHT_BRACKET, SC, BARE_EDIT_INDENT }, { ALL, BARE_KEY_LEFT_BRACKET, SC, BARE_EDIT_OUTDENT },
+    { ALL, BARE_KEY_SLASH, SC, BARE_EDIT_COMMENT },
+    { PC, BARE_KEY_H, SC, BARE_EDIT_REPLACE },             { PC, BARE_KEY_G, SC, BARE_EDIT_GOTO_LINE },
+    { PC, BARE_KEY_F3, 0, BARE_EDIT_FIND_NEXT },           { PC, BARE_KEY_F3, SH, BARE_EDIT_FIND_PREV },
+    { MAC, BARE_KEY_F, SC | AL, BARE_EDIT_REPLACE },       { MAC, BARE_KEY_G, BARE_MOD_CTRL, BARE_EDIT_GOTO_LINE },
+    { MAC, BARE_KEY_G, SC, BARE_EDIT_FIND_NEXT },          { MAC, BARE_KEY_G, SC | SH, BARE_EDIT_FIND_PREV },
+};
+
 static uint8_t resolve_mods(const BareContext *ctx, int mods) {
     if (mods & BARE_MOD_SHORTCUT) mods = (mods & ~BARE_MOD_SHORTCUT) | (ctx->mac_keys ? BARE_MOD_SUPER : BARE_MOD_CTRL);
     return (uint8_t)(mods & 15);
@@ -56,12 +75,18 @@ static uint8_t resolve_mods(const BareContext *ctx, int mods) {
 
 static bool load_defaults(BareContext *ctx) {
     if (ctx->bind_count) return true;
-    int n = (int)(sizeof defaults / sizeof defaults[0]);
-    if (!bare__grow(&ctx->alloc, (void **)&ctx->binds, &ctx->bind_cap, n, sizeof *ctx->binds)) return false;
+    int n = (int)(sizeof defaults / sizeof defaults[0]), m = (int)(sizeof editor_defaults / sizeof editor_defaults[0]);
+    if (!bare__grow(&ctx->alloc, (void **)&ctx->binds, &ctx->bind_cap, n + m, sizeof *ctx->binds)) return false;
     for (int i = 0; i < n; i++) {
         if (defaults[i].plat == (ctx->mac_keys ? PC : MAC)) continue;
         ctx->binds[ctx->bind_count++] = (BareKeyBinding){ defaults[i].key, resolve_mods(ctx, defaults[i].mods),
-                                                          defaults[i].action };
+                                                          defaults[i].action, 0 };
+    }
+    for (int i = 0; i < m; i++) {
+        if (editor_defaults[i].plat == (ctx->mac_keys ? PC : MAC)) continue;
+        ctx->binds[ctx->bind_count++] = (BareKeyBinding){ editor_defaults[i].key,
+                                                          resolve_mods(ctx, editor_defaults[i].mods),
+                                                          editor_defaults[i].action, 1 };
     }
     return true;
 }
@@ -71,12 +96,17 @@ static bool is_move(int a) { return a >= BARE_EDIT_LEFT && a <= BARE_EDIT_TEXT_E
 BareEditAction bare__edit_lookup(BareContext *ctx, int key, int mods, bool *extend) {
     *extend = false;
     if (!load_defaults(ctx)) return BARE_EDIT_NONE;
+    if (ctx->focus_kind & BARE__FOCUS_EDITOR)   /* an editor's own keys win */
+        for (int i = 0; i < ctx->bind_count; i++)
+            if (ctx->binds[i].editor && ctx->binds[i].key == key && ctx->binds[i].mods == mods)
+                return (BareEditAction)ctx->binds[i].action;
     for (int i = 0; i < ctx->bind_count; i++)
-        if (ctx->binds[i].key == key && ctx->binds[i].mods == mods) return (BareEditAction)ctx->binds[i].action;
+        if (!ctx->binds[i].editor && ctx->binds[i].key == key && ctx->binds[i].mods == mods)
+            return (BareEditAction)ctx->binds[i].action;
     if (mods & BARE_MOD_SHIFT) {   /* Shift + a movement selects */
         for (int i = 0; i < ctx->bind_count; i++) {
             const BareKeyBinding *b = &ctx->binds[i];
-            if (b->key == key && b->mods == (mods & ~BARE_MOD_SHIFT) && is_move(b->action)) {
+            if (!b->editor && b->key == key && b->mods == (mods & ~BARE_MOD_SHIFT) && is_move(b->action)) {
                 *extend = true;
                 return (BareEditAction)b->action;
             }
@@ -89,15 +119,15 @@ void bare_edit_bind(int key, int mods, BareEditAction action) {
     BareContext *ctx = bare_ctx_current();
     if (!ctx || key <= BARE_KEY_NONE || key >= BARE_KEY_COUNT_ || !load_defaults(ctx)) return;
     uint8_t m = resolve_mods(ctx, mods);
-    for (int i = 0; i < ctx->bind_count; i++) {
-        if (ctx->binds[i].key != key || ctx->binds[i].mods != m) continue;
-        if (action <= BARE_EDIT_NONE || action >= BARE_EDIT_ACTION_COUNT_) ctx->binds[i] = ctx->binds[--ctx->bind_count];
-        else ctx->binds[i].action = (uint8_t)action;
-        return;
+    /* The key does only this from now on, in fields and editors alike (editor
+     * actions are bound for editors only). */
+    for (int i = 0; i < ctx->bind_count;) {
+        if (ctx->binds[i].key == key && ctx->binds[i].mods == m) ctx->binds[i] = ctx->binds[--ctx->bind_count];
+        else i++;
     }
     if (action <= BARE_EDIT_NONE || action >= BARE_EDIT_ACTION_COUNT_) return;
     if (!bare__grow(&ctx->alloc, (void **)&ctx->binds, &ctx->bind_cap, ctx->bind_count + 1, sizeof *ctx->binds)) return;
-    ctx->binds[ctx->bind_count++] = (BareKeyBinding){ key, m, (uint8_t)action };
+    ctx->binds[ctx->bind_count++] = (BareKeyBinding){ key, m, (uint8_t)action, action >= BARE_EDIT_FIND };
 }
 
 /* Keys that type something: the field takes them even though the text
@@ -162,7 +192,7 @@ void bare__edit_word_at(const char *s, int len, int at, int *a, int *b) {
 
 /* Ctrl+← (and Option+←): back over spaces, then over one run of a word or
  * of punctuation. A line start stops it at the line break. */
-static int word_left(const char *s, int at) {
+int bare__edit_word_left(const char *s, int at) {
     int len = at;
     if (at > 0 && s[at - 1] == '\n') return at - 1;
     while (at > 0 && class_at(s, len, bare__edit_prev(s, at)) == C_SPACE) at = bare__edit_prev(s, at);
@@ -174,7 +204,7 @@ static int word_left(const char *s, int at) {
 
 /* Ctrl+→ on Windows / Linux stops at the next word's start; Option+→ on
  * macOS at the end of this or the next word. */
-static int word_right(const char *s, int len, int at, bool mac) {
+int bare__edit_word_right(const char *s, int len, int at, bool mac) {
     if (at < len && s[at] == '\n') return at + 1;
     if (mac) {
         while (at < len && class_at(s, len, at) == C_SPACE) at = bare__edit_next(s, len, at);
@@ -212,7 +242,7 @@ static void undo_trim(BareEditState *ed) {
 }
 
 /* Grows the last record instead of adding one, for typing runs. */
-static bool merge(BareEditor *e, int at, int del, const char *ins, int n, int kind) {
+static bool merge(BareEditCtx *e, int at, int del, const char *ins, int n, int kind) {
     BareEditState *ed = e->ed;
     if (!ed->merge || ed->undo_pos != ed->undo_count || ed->undo_count == 0) return false;
     BareUndo *u = &ed->undo[ed->undo_count - 1];
@@ -241,7 +271,7 @@ static bool merge(BareEditor *e, int at, int del, const char *ins, int n, int ki
     return false;
 }
 
-static void record(BareEditor *e, int at, int del, const char *ins, int n, int kind, int caret0, int anchor0) {
+static void record(BareEditCtx *e, int at, int del, const char *ins, int n, int kind, int caret0, int anchor0) {
     BareEditState *ed = e->ed;
     if (merge(e, at, del, ins, n, kind)) return;
     ed->undo_count = ed->undo_pos;   /* a new change forgets what was undone */
@@ -269,7 +299,7 @@ static int fit(const char *s, int n, int room) {
 }
 
 /* The one way text changes: bytes [at, at + del) become ins[0..n). */
-static void replace(BareEditor *e, int at, int del, const char *ins, int n, int kind) {
+static void replace(BareEditCtx *e, int at, int del, const char *ins, int n, int kind) {
     if (e->read_only) return;
     n = fit(ins, n, e->cap - (e->len - del));
     if (del == 0 && n == 0) return;
@@ -291,7 +321,7 @@ static void replace(BareEditor *e, int at, int del, const char *ins, int n, int 
     e->changed = true;
 }
 
-static void undo(BareEditor *e, bool redo) {
+static void undo(BareEditCtx *e, bool redo) {
     BareEditState *ed = e->ed;
     if (e->read_only || (redo ? ed->undo_pos >= ed->undo_count : ed->undo_pos <= 0)) return;
     const BareUndo *u = &ed->undo[redo ? ed->undo_pos : ed->undo_pos - 1];
@@ -332,7 +362,7 @@ void bare__edit_release(BareContext *ctx, BareEditState *ed) {
 static int sel_lo(const BareEditState *ed) { return ed->caret < ed->anchor ? ed->caret : ed->anchor; }
 static int sel_hi(const BareEditState *ed) { return ed->caret > ed->anchor ? ed->caret : ed->anchor; }
 
-void bare__edit_select(BareEditor *e, int anchor, int caret, bool upstream) {
+void bare__edit_select(BareEditCtx *e, int anchor, int caret, bool upstream) {
     BareEditState *ed = e->ed;
     if (anchor < 0) anchor = 0;
     if (caret < 0) caret = 0;
@@ -345,17 +375,17 @@ void bare__edit_select(BareEditor *e, int anchor, int caret, bool upstream) {
     ed->merge = false;
 }
 
-static void move_to(BareEditor *e, int to, bool extend, bool upstream) {
+static void move_to(BareEditCtx *e, int to, bool extend, bool upstream) {
     bare__edit_select(e, extend ? e->ed->anchor : to, to, upstream);
 }
 
-static void delete_sel(BareEditor *e) {
+static void delete_sel(BareEditCtx *e) {
     int lo = sel_lo(e->ed), hi = sel_hi(e->ed);
     if (hi > lo) replace(e, lo, hi - lo, "", 0, BARE__UNDO_OTHER);
 }
 
 /* Visual line start / end: the wrapped line in a multi-line field. */
-static void line_bounds(BareEditor *e, int *start, int *end, bool *end_upstream) {
+static void line_bounds(BareEditCtx *e, int *start, int *end, bool *end_upstream) {
     BareEditState *ed = e->ed;
     *end_upstream = false;
     BareText *t = e->multiline && e->layout ? e->layout(e) : NULL;
@@ -366,7 +396,7 @@ static void line_bounds(BareEditor *e, int *start, int *end, bool *end_upstream)
 }
 
 /* ↑ ↓ PageUp PageDown: lines away, keeping the caret's column. */
-static void vertical(BareEditor *e, int lines, bool extend) {
+static void vertical(BareEditCtx *e, int lines, bool extend) {
     BareEditState *ed = e->ed;
     BareText *t = e->multiline && e->layout ? e->layout(e) : NULL;
     if (!t) { move_to(e, lines < 0 ? 0 : e->len, extend, false); return; }
@@ -383,7 +413,7 @@ static void vertical(BareEditor *e, int lines, bool extend) {
     ed->has_goal = true;
 }
 
-static void paste(BareEditor *e) {
+static void paste(BareEditCtx *e) {
     const char *clip = bare__clipboard_get(e->ctx);
     int n = (int)strlen(clip);
     char *s = bare__arena_alloc(&e->ctx->frame, (size_t)n + 1, 1);
@@ -400,7 +430,7 @@ static void paste(BareEditor *e) {
     replace(e, lo, hi - lo, s, k, BARE__UNDO_OTHER);
 }
 
-static void copy(BareEditor *e) {
+static void copy(BareEditCtx *e) {
     int lo = sel_lo(e->ed), hi = sel_hi(e->ed);
     if (hi <= lo || e->password) return;
     char *s = bare__arena_alloc(&e->ctx->frame, (size_t)(hi - lo) + 1, 1);
@@ -409,7 +439,7 @@ static void copy(BareEditor *e) {
     bare__clipboard_set(e->ctx, s);
 }
 
-void bare__edit_run(BareEditor *e, BareEditAction a, bool extend) {
+void bare__edit_run(BareEditCtx *e, BareEditAction a, bool extend) {
     BareEditState *ed = e->ed;
     bool mac = e->ctx->mac_keys;
     int lo = sel_lo(ed), hi = sel_hi(ed);
@@ -426,8 +456,8 @@ void bare__edit_run(BareEditor *e, BareEditAction a, bool extend) {
         if (sel && !extend) move_to(e, hi, false, false);
         else move_to(e, bare__edit_next(e->buf, e->len, ed->caret), extend, false);
         break;
-    case BARE_EDIT_WORD_LEFT: move_to(e, word_left(e->buf, ed->caret), extend, false); break;
-    case BARE_EDIT_WORD_RIGHT: move_to(e, word_right(e->buf, e->len, ed->caret, mac), extend, false); break;
+    case BARE_EDIT_WORD_LEFT: move_to(e, bare__edit_word_left(e->buf, ed->caret), extend, false); break;
+    case BARE_EDIT_WORD_RIGHT: move_to(e, bare__edit_word_right(e->buf, e->len, ed->caret, mac), extend, false); break;
     case BARE_EDIT_LINE_START: {
         int s, end; bool up;
         line_bounds(e, &s, &end, &up);
@@ -472,7 +502,7 @@ void bare__edit_run(BareEditor *e, BareEditAction a, bool extend) {
         if (sel) { delete_sel(e); break; }
         {
             int to;
-            if (a == BARE_EDIT_DELETE_WORD_LEFT) to = word_left(e->buf, ed->caret);
+            if (a == BARE_EDIT_DELETE_WORD_LEFT) to = bare__edit_word_left(e->buf, ed->caret);
             else { int end; bool up; line_bounds(e, &to, &end, &up); if (to == ed->caret) to = bare__edit_prev(e->buf, to); }
             replace(e, to, ed->caret - to, "", 0, BARE__UNDO_OTHER);
         }
@@ -480,7 +510,7 @@ void bare__edit_run(BareEditor *e, BareEditAction a, bool extend) {
     case BARE_EDIT_DELETE_WORD_RIGHT:
         if (sel) delete_sel(e);
         else {
-            int to = word_right(e->buf, e->len, ed->caret, mac);
+            int to = bare__edit_word_right(e->buf, e->len, ed->caret, mac);
             replace(e, ed->caret, to - ed->caret, "", 0, BARE__UNDO_OTHER);
         }
         break;
@@ -509,7 +539,7 @@ void bare__edit_run(BareEditor *e, BareEditAction a, bool extend) {
 
 /* Typed (or IME-committed) text replaces the selection; in overwrite mode it
  * replaces the characters after the caret too, but not a line break. */
-void bare__edit_type(BareEditor *e, const char *text, int n) {
+void bare__edit_type(BareEditCtx *e, const char *text, int n) {
     BareEditState *ed = e->ed;
     ed->comp_len = 0;
     ed->has_goal = false;
@@ -535,7 +565,7 @@ void bare__edit_type(BareEditor *e, const char *text, int n) {
     e->moved = true;
 }
 
-void bare__edit_set_comp(BareEditor *e, const char *text, int n, int cursor) {
+void bare__edit_set_comp(BareEditCtx *e, const char *text, int n, int cursor) {
     BareEditState *ed = e->ed;
     if (e->read_only) n = 0;
     if (!bare__grow(&e->ctx->alloc, (void **)&ed->comp, &ed->comp_cap, n + 1, 1)) return;

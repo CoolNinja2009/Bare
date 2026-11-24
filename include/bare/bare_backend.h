@@ -39,6 +39,11 @@ typedef struct BarePlatform {
     void   (*start_text_input)(void *self, BareTextInputKind kind, BareRect caret);
     void   (*stop_text_input)(void *self);
     void  *(*native)(void *self, BareNativeKind what);
+    /* The system's file dialog, without blocking: the answer comes back from
+     * poll_events as a BARE_EVENT_FILE_CHOSEN with this `request`. kind: 0
+     * open, 1 save, 2 folder. filters: "Markdown:md;markdown|Text:txt" or
+     * NULL. NULL if the platform has none. */
+    void   (*file_dialog)(void *self, uint64_t request, int kind, const char *filters, const char *path);
     /* Platforms that own the main loop set this; others leave it NULL. */
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);
 } BarePlatform;

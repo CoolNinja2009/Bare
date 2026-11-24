@@ -1,9 +1,14 @@
-foreach(name hello shapes glass layout buttons cards text scroll styles editor)
+foreach(name hello shapes glass layout buttons cards text scroll styles editor widgets code)
     add_executable(${name} ${name}.c)
     target_link_libraries(${name} PRIVATE bare)
     target_compile_options(${name} PRIVATE ${BARE_WARNINGS})
 endforeach()
 target_compile_definitions(text PRIVATE ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets/")
+
+# Write: a Markdown and plain text editor on liquid glass.
+add_executable(write write/write.c write/md.c)
+target_link_libraries(write PRIVATE bare)
+target_compile_options(write PRIVATE ${BARE_WARNINGS})
 
 # Fluids: a GPU fluid simulation on canvases, with its own shaders.
 add_executable(fluid fluid/fluid.c)

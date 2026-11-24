@@ -112,43 +112,83 @@ void bare__store_free(BareContext *ctx);
 
 /* ---- text (text.c, font_stb.c) ------------------------------------------ */
 
-typedef struct BareTextLine { int first, count; float width; bool cut; } BareTextLine;   /* cut: ends in the ellipsis */
+/* A run of a text: the bytes from `start` to the next run's start, in one
+ * face, size and colour (bare_span). Plain text is one run. */
+typedef struct BareTextRun {
+    int        start;
+    BareFont   font;                        /* the face: family, weight and italic resolved */
+    float      size, ascent, descent, lh;   /* pixels; lh: its line height */
+    float      spacing;                     /* letter spacing */
+    BareColor  color;                       /* alpha 0 = the element's (inherited) colour */
+    BareColor  background;                  /* behind its glyphs; alpha 0 = none */
+    bool       underline, strike;
+} BareTextRun;
 
-/* What a text field draws with its text (field.c): selection behind, caret
- * and IME underline in front. Byte offsets into the shown text. */
+typedef struct BareSpanIn { int start; BareTextStyle style; } BareSpanIn;   /* a span as declared */
+
+/* A line after wrapping. cut: ends in the ellipsis. y, h: its line box from
+ * the text's top; asc: baseline from the line box's top. */
+typedef struct BareTextLine { int first, count; float width; bool cut; float y, h, asc; } BareTextLine;
+
+/* What a text field or editor line draws with its text (field.c): selection
+ * and marks behind, carets and the IME underline in front. Byte offsets into
+ * the shown text. */
 typedef struct BareTextDeco {
     int        caret;   bool upstream, caret_on, block;
     int        sel_a, sel_b;            /* empty when equal */
     int        comp_a, comp_b;          /* IME composition, underlined */
     BareColor  caret_color, sel_color;
+    const int *carets;  int caret_count;   /* more carets (editors); upstream never */
+    const int *sels;    int sel_count;     /* more selections: pairs a, b */
+    const int *marks;   int mark_count;    /* outlined ranges (find matches, brackets): pairs a, b */
+    BareColor  mark_color;
+    bool       whitespace;              /* dots for spaces, arrows for tabs */
+    BareColor  whitespace_color;
 } BareTextDeco;
 
 /* A bare_text element's payload, in the frame arena. Shaped at its logical
  * size when declared; wrapped by layout pass 3; drawn by emit. */
 typedef struct BareText {
     const char      *str;   int len;
-    BareFont         font;
+    BareFont         font;                  /* the paragraph's face (ellipsis, tabs, the line strut) */
     float            size, line_height;     /* pixels; line_height already multiplied */
+    float            ascent, descent;       /* of the paragraph's face at its size */
     BareAlign        align;
-    bool             nowrap;
-    bool             ellipsis, underline, strike;
+    bool             nowrap, ellipsis;
+    bool             uniform;               /* every run has the paragraph's line metrics */
     int              max_lines;             /* 0 = no limit */
     BareColor        color;                 /* alpha 0 = inherited */
+    BareShadow       shadow;
+    BareTextRun     *runs;   int run_count;
+    uint16_t        *grun;                  /* each glyph's run; NULL with one run */
     BareShapedGlyph  ell[3]; int ell_count; /* the ellipsis (U+2026, or "..." if the font lacks it) */
     float            ell_w;
     BareShapedGlyph *glyphs; int glyph_count;
-    float            ascent, descent;       /* at size */
     float            max_line;              /* widest line without wrapping */
     float            min_word;              /* widest run that can't be broken at a space or hyphen */
     BareTextLine    *lines;  int line_count;
+    float            height;                /* of all lines, after wrapping */
     BareTextDeco    *deco;                  /* text fields only */
 } BareText;
 
 typedef struct BareFontRec {
-    void  *handle;                          /* the backend's; NULL until loaded */
-    void  *owned;  size_t owned_size;       /* file data read by bare_font_load */
-    bool   alive, failed;
+    void   *handle;                         /* the backend's; NULL until loaded */
+    void   *owned;  size_t owned_size;      /* file data read by bare_font_load */
+    bool    alive, failed;
+    BareFont family;                        /* the family's first face (itself for a root) */
+    int16_t weight;                         /* 100..900 */
+    bool    italic;
 } BareFontRec;
+
+/* Built-in faces: 0 Inter Regular, 1 JetBrains Mono, Inter SemiBold, Bold,
+ * Italic, Bold Italic, mono Bold. Loaded faces come after them. */
+#define BARE__FONT_BUILTIN 7
+#ifdef BARE_HAS_DEFAULT_FONT
+extern const unsigned char bare__font_mono_data[], bare__font_mono_bold_data[], bare__font_sans_semibold_data[],
+    bare__font_sans_bold_data[], bare__font_sans_italic_data[], bare__font_sans_bold_italic_data[];
+extern const int bare__font_mono_size, bare__font_mono_bold_size, bare__font_sans_semibold_size,
+    bare__font_sans_bold_size, bare__font_sans_italic_size, bare__font_sans_bold_italic_size;
+#endif
 
 typedef struct BareGlyphSlot {              /* a rasterized glyph in the atlas */
     uint64_t key;                           /* 0 = empty */
@@ -160,11 +200,18 @@ typedef struct BareShelf { int y, h, x; } BareShelf;
 
 uint32_t bare__utf8_decode(const char *s, int len, int *i);   /* advances *i; U+FFFD for bad bytes */
 const BareFontBackend *bare__font_backend(const BareContext *ctx);
+void *bare__font_handle(BareContext *ctx, BareFont *id);       /* *id becomes the face that stood in; NULL: none */
+BareFont bare__font_face(BareContext *ctx, BareFont font, int weight, bool italic);   /* nearest face in the family */
+const BareGlyphSlot *bare__glyph_get(BareContext *ctx, void *font, BareFont id, uint32_t glyph, float px, int sub);
 BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareTextStyle *style);
+BareText *bare__text_runs(BareContext *ctx, const char *str, int len, const BareTextStyle *style,
+                          const BareSpanIn *spans, int span_count);
 void  bare__text_wrap(BareContext *ctx, BareText *t, float width);
 float bare__text_height(const BareText *t);
+int   bare__text_line_at_y(const BareText *t, float y);
 void  bare__text_begin_emit(BareContext *ctx);                 /* starts the atlas over if it filled up */
-void  bare__text_emit(BareContext *ctx, const BareText *t, BareRect r, float vscale, bool snap, BareColorF color);
+void  bare__text_emit(BareContext *ctx, const BareText *t, BareRect r, float vscale, bool snap, BareColorF color,
+                      float opacity);
 void  bare__text_end_frame(BareContext *ctx);                  /* atlas uploads, uv normalisation */
 void  bare__text_free(BareContext *ctx);
 
@@ -297,7 +344,8 @@ typedef struct BareHit {
     uint8_t  focus;             /* BARE__FOCUS_* */
 } BareHit;
 
-enum { BARE__FOCUS_ABLE = 1, BARE__FOCUS_FIELD = 2, BARE__FOCUS_TABS = 4, BARE__FOCUS_LINE = 8 };
+enum { BARE__FOCUS_ABLE = 1, BARE__FOCUS_FIELD = 2, BARE__FOCUS_TABS = 4, BARE__FOCUS_LINE = 8,
+       BARE__FOCUS_EDITOR = 16 };   /* EDITOR: takes Tab and Shift+Tab; its own key bindings apply */
 
 /* Keyboard input in arrival order, so typing, editing keys and IME text
  * interleave right (focus.c). Kept until the focused field consumes it. */
@@ -311,7 +359,7 @@ typedef struct BareKeyEv {
 
 enum { BARE__IN_KEY, BARE__IN_TEXT, BARE__IN_COMPOSE, BARE__IN_ACTION };
 
-typedef struct BareKeyBinding { int key; uint8_t mods; uint8_t action; } BareKeyBinding;
+typedef struct BareKeyBinding { int key; uint8_t mods, action, editor; } BareKeyBinding;   /* editor: bare_editor only */
 
 /* A text field declared this frame (field.c), fixed up after layout. */
 typedef struct BareFieldFrame {
@@ -386,6 +434,12 @@ struct BareContext {
     int            text_cmd_first;                        /* first text cmd of this frame's emit */
     int            raster_count;                          /* glyphs rasterized (tests) */
     BareTextureUpload upload;
+    /* bare_paragraph being declared: its element, style and spans so far. */
+    int            para_elem, para_depth;                 /* -1 = none */
+    BareTextStyle  para_style;
+    char          *para_buf;   int para_len, para_cap;
+    BareSpanIn    *para_spans; int para_span_count, para_span_cap;
+    const char    *para_file;  int para_line;
 
     BareDrawCmd  *cmds;    int cmd_count, cmd_cap;
     BareDrawList  list;

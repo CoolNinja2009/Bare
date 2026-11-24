@@ -62,7 +62,10 @@ static int push_text(BareContext *ctx, const char *s, int len) {
 /* Whether a focused field uses this key press (so the app doesn't see it). */
 static bool field_takes(BareContext *ctx, int key, int mods) {
     bool extend;
-    if (key == BARE_KEY_TAB) return (ctx->focus_kind & BARE__FOCUS_TABS) && !(mods & BARE_MOD_SHIFT);
+    if (key == BARE_KEY_TAB) {
+        if (ctx->focus_kind & BARE__FOCUS_EDITOR) return !(mods & (BARE_MOD_CTRL | BARE_MOD_ALT | BARE_MOD_SUPER));
+        return (ctx->focus_kind & BARE__FOCUS_TABS) && !(mods & BARE_MOD_SHIFT);
+    }
     return bare__edit_lookup(ctx, key, mods, &extend) != BARE_EDIT_NONE || bare__edit_types(ctx, key, mods);
 }
 
@@ -125,6 +128,7 @@ static void drop_front(BareContext *ctx, int n) {
 
 static bool moves_focus(const BareContext *ctx, const BareKeyEv *k) {
     if (k->kind != BARE__IN_KEY || k->key != BARE_KEY_TAB) return false;
+    if (ctx->focus_kind & BARE__FOCUS_EDITOR) return (k->mods & (BARE_MOD_CTRL | BARE_MOD_ALT | BARE_MOD_SUPER)) != 0;
     return !((ctx->focus_kind & BARE__FOCUS_TABS) && !(k->mods & BARE_MOD_SHIFT));
 }
 
@@ -172,7 +176,7 @@ void bare__focus_end(BareContext *ctx) {
     if (!ctx->focus_id || !(ctx->focus_kind & BARE__FOCUS_FIELD)) {   /* nothing to replay text into */
         int keep = 0;
         for (int i = 0; i < ctx->in_count; i++)
-            if (ctx->in[i].kind == BARE__IN_KEY) ctx->in[keep++] = ctx->in[i];
+            if (ctx->in[i].kind == BARE__IN_KEY || ctx->in[i].kind == BARE__IN_ACTION) ctx->in[keep++] = ctx->in[i];
         ctx->in_count = keep;
         if (!keep) ctx->in_text_len = 0;
     }

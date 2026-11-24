@@ -57,6 +57,7 @@ typedef struct BareTextCmd {
     BareColorF       color;
     const BareGlyph *glyphs;
     int              count;
+    float            blur;         /* text shadows: Gaussian blur radius, physical pixels (0 = sharp) */
 } BareTextCmd;
 
 typedef struct BareImageCmd {
@@ -186,7 +187,8 @@ typedef enum BareEventKind {
     BARE_EVENT_FOCUS,
     BARE_EVENT_QUIT,
     BARE_EVENT_TEXT,           /* typed text (UTF-8), after the layout, dead keys and IME did their work */
-    BARE_EVENT_COMPOSITION     /* the IME's text being composed (empty: composition over); replaces the last one */
+    BARE_EVENT_COMPOSITION,    /* the IME's text being composed (empty: composition over); replaces the last one */
+    BARE_EVENT_FILE_CHOSEN     /* a file dialog's answer (BarePlatform.file_dialog) */
 } BareEventKind;
 
 enum { BARE_MOUSE_LEFT = 1, BARE_MOUSE_MIDDLE = 2, BARE_MOUSE_RIGHT = 3 };
@@ -206,6 +208,7 @@ typedef struct BareEvent {
          * returns. cursor: byte offset of the IME's cursor in the composition. */
         struct { const char *utf8; int len; int cursor; } text;
         struct { float w, h, scale; } size;
+        struct { uint64_t request; const char *path; } file;   /* path NULL: cancelled; valid until the next poll */
         bool focused;
     } as;
 } BareEvent;
