@@ -128,6 +128,33 @@ void bare__scroll_wheel(BareContext *ctx, float dx, float dy, bool precise) {
     }
 }
 
+/* Scrolls every scroll box around a hit (from the inside out) just enough
+ * that the hit shows, as focusing with Tab does in a browser. */
+void bare__scroll_into_view(BareContext *ctx, int hit) {
+    if (hit < 0 || hit >= ctx->hit_count) return;
+    BareRect r = ctx->hits[hit].rect;
+    for (int i = ctx->hits[hit].parent; i >= 0; i = ctx->hits[i].parent) {
+        const BareHit *h = &ctx->hits[i];
+        if (!h->scroll || h->node < 0) continue;
+        BareNode *n = &ctx->store.nodes[h->node];
+        float d[2] = { 0, 0 };
+        for (int a = 0; a < 2; a++) {
+            if (!bare__scrolls(h->scroll, a)) continue;
+            float lo = a ? h->rect.y : h->rect.x, len = a ? h->rect.h : h->rect.w;
+            float s = a ? r.y : r.x, e = s + (a ? r.h : r.w);
+            if (e - s > len || s < lo) d[a] = s - lo;
+            else if (e > lo + len) d[a] = e - (lo + len);
+            float *to = axis_of(&n->scroll_to, a);
+            float nt = fminf(fmaxf(*to + d[a], 0.0f), max_scroll(n, a));
+            d[a] = nt - *to;
+            *to = nt;
+        }
+        if (d[0] != 0 || d[1] != 0) poke(ctx, n);
+        r.x -= d[0];   /* where it will be inside the next box out */
+        r.y -= d[1];
+    }
+}
+
 /* The thumb of one axis, from the box's start along it: the track is the box
  * inset at both ends (and short of the other bar's corner). */
 void bare__scroll_thumb(float view, float content, float scroll, float other, float *pos, float *len) {
@@ -200,7 +227,7 @@ static int push_overlay(BareContext *ctx, int parent, const BareBox *box, int ov
  * last layout. The rail takes the mouse; the bar inside it is what shows. */
 void bare__scroll_close(BareContext *ctx, int index) {
     BareElem *e = &ctx->elems[index];
-    if (!e->box.scroll || e->node < 0 || ctx->depth >= BARE__MAX_DEPTH) return;
+    if (!e->box.scroll || e->no_bars || e->node < 0 || ctx->depth >= BARE__MAX_DEPTH) return;
     BareNode *n = &ctx->store.nodes[e->node];
     bool hovered = bare__chain_has(&ctx->hover, e->id);
     if (hovered && ctx->mouse_moved) n->scroll_seen = ctx->time;

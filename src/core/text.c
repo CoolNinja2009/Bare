@@ -135,11 +135,43 @@ static float align_t(BareAlign al) {
     return al == BARE_CENTER ? 0.5f : al == BARE_END ? 1.0f : 0.0f;
 }
 
+/* CSS text-transform for ASCII and Latin-1 letters. Both cases have the same
+ * UTF-8 length there, so byte offsets (carets, clusters) stay valid. */
+static void transform_case(char *s, int len, BareTransform tr) {
+    bool up = tr == BARE_UPPERCASE;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x80) {
+            if (up && c >= 'a' && c <= 'z') s[i] = (char)(c - 32);
+            if (!up && c >= 'A' && c <= 'Z') s[i] = (char)(c + 32);
+        } else if (c == 0xC3 && i + 1 < len) {   /* U+00C0..U+00FF */
+            unsigned char d = (unsigned char)s[i + 1];
+            if (up && d >= 0xA0 && d <= 0xBE && d != 0xB7) s[i + 1] = (char)(d - 0x20);   /* not the division sign */
+            if (!up && d >= 0x80 && d <= 0x9E && d != 0x97) s[i + 1] = (char)(d + 0x20);  /* not the times sign */
+            i++;
+        }
+    }
+}
+
+static void shape_ellipsis(BareContext *ctx, void *font, BareText *t, float spacing) {
+    const BareFontBackend *fb = bare__font_backend(ctx);
+    t->ell_count = fb->shape(font, t->size, "\xE2\x80\xA6", 3, t->ell, 3);
+    if (t->ell_count != 1 || t->ell[0].glyph == 0) t->ell_count = fb->shape(font, t->size, "...", 3, t->ell, 3);
+    t->ell_w = 0;
+    for (int g = 0; g < t->ell_count; g++) {
+        t->ell[g].cluster = 0;
+        t->ell[g].advance += spacing;
+        t->ell_w += t->ell[g].advance;
+    }
+}
+
 BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareTextStyle *style) {
     BareText *t = bare__arena_alloc(&ctx->frame, sizeof *t, 16);
     char *copy = bare__arena_alloc(&ctx->frame, (size_t)len + 1, 1);
     if (!t || !copy) return NULL;
+    memset(t, 0, sizeof *t);
     memcpy(copy, str, (size_t)len);
+    if (style->transform) transform_case(copy, len, style->transform);
     t->str = copy;
     t->len = len;
     t->font = style->font;
@@ -147,6 +179,10 @@ BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareT
     t->line_height = t->size * (style->line_height > 0 ? style->line_height : 1.3f);
     t->align = style->align;
     t->nowrap = style->nowrap;
+    t->ellipsis = style->ellipsis;
+    t->underline = style->underline;
+    t->strike = style->strike;
+    t->max_lines = style->max_lines > 0 ? style->max_lines : 0;
     t->color = style->color;
 
     void *font = font_handle(ctx, t->font);
@@ -158,6 +194,13 @@ BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareT
         t->glyphs = bare__arena_alloc(&ctx->frame, sizeof *t->glyphs * (size_t)len, 16);
         if (t->glyphs) t->glyph_count = fb->shape(font, t->size, copy, len, t->glyphs, len);
     }
+    /* Letter spacing goes after every character, as in CSS, so carets and
+     * hit tests (which walk the advances) agree with what's drawn. */
+    float spacing = style->letter_spacing;
+    if (spacing != 0)
+        for (int g = 0; g < t->glyph_count; g++)
+            if (copy[t->glyphs[g].cluster] != '\n') t->glyphs[g].advance += spacing;
+    if (t->ellipsis) shape_ellipsis(ctx, font, t, spacing);
 
     /* Widest line as is, and the widest run that can't be broken. */
     float line = 0, ink = 0, word = 0;
@@ -180,6 +223,7 @@ BareText *bare__text_new(BareContext *ctx, const char *str, int len, const BareT
     }
     t->max_line = BARE__MAX(t->max_line, ink);
     if (t->nowrap) t->min_word = t->max_line;
+    if (t->nowrap && t->ellipsis) t->min_word = BARE__MIN(t->max_line, t->ell_w);   /* squeezable: it cuts */
     return t;
 }
 
@@ -196,6 +240,20 @@ static void add_line(BareText *t, int first, int end) {
     l->first = first;
     l->count = end - first;
     l->width = run_width(t, first, end);
+    l->cut = false;
+}
+
+/* Ends a line in the ellipsis, dropping characters until both fit `width`.
+ * `always`: the text goes on after this line (.max_lines), so it gets one
+ * even when the line itself fits. */
+static void cut_line(BareText *t, BareTextLine *l, float width, bool always) {
+    if (!always && l->width <= width + 0.01f) return;
+    int end = l->first + l->count;
+    while (end > l->first && run_width(t, l->first, end) + t->ell_w > width + 0.01f) end--;
+    while (end > l->first && char_class(t, end - 1) == CH_SPACE) end--;   /* "word...", not "word ..." */
+    l->count = end - l->first;
+    l->width = run_width(t, l->first, end) + t->ell_w;
+    l->cut = t->ell_count > 0;
 }
 
 /* Greedy line breaking: at spaces (which hang off the end of a line) and
@@ -240,6 +298,14 @@ void bare__text_wrap(BareContext *ctx, BareText *t, float width) {
         if (c == CH_HYPHEN) brk = g + 1;
     }
     add_line(t, start, n);
+
+    if (t->max_lines > 0 && t->line_count > t->max_lines) {
+        t->line_count = t->max_lines;
+        if (t->ellipsis) cut_line(t, &t->lines[t->line_count - 1], width, true);
+    }
+    if (t->ellipsis && t->nowrap)   /* text-overflow: ellipsis on each line too long for the box */
+        for (int l = 0; l < t->line_count; l++)
+            if (!t->lines[l].cut) cut_line(t, &t->lines[l], width, false);
 }
 
 float bare__text_height(const BareText *t) {
@@ -392,49 +458,83 @@ static const BareGlyphSlot *glyph_get(BareContext *ctx, void *font, BareFont fon
 
 /* ---- drawing ---------------------------------------------------------------- */
 
+typedef struct Pen {
+    BareContext *ctx; void *font; const BareText *t;
+    float k, vscale, px, base, x; bool snap;
+    BareGlyph *out; int count;
+} Pen;
+
+static void put_glyph(Pen *p, const BareShapedGlyph *sg, bool blank) {
+    BareContext *ctx = p->ctx;
+    float x = p->x + sg->x_offset * p->k;
+    p->x += sg->advance * p->k;
+    if (blank) return;
+    int sub = 0;
+    if (p->snap) {   /* whole pixels plus one of three sub-pixel phases */
+        float ix = floorf(x);
+        sub = (int)((x - ix) * SUBPIXELS + 0.5f);
+        x = ix;
+        if (sub == SUBPIXELS) { sub = 0; x += 1; }
+    }
+    const BareGlyphSlot *s = glyph_get(ctx, p->font, p->t->font, sg->glyph, p->px, sub);
+    if (!s) { ctx->text_redraw = ctx->text_redraw || ctx->atlas_full; return; }
+    if (s->w <= 0 || s->h <= 0) return;
+    BareGlyph *o = &p->out[p->count++];
+    o->dst = (BareRect){ x + (float)s->left * p->vscale, p->base + (sg->y_offset * p->k) + (float)s->top * p->vscale,
+                         (float)s->w * p->vscale, (float)s->h * p->vscale };
+    o->uv = (BareRect){ (float)s->x, (float)s->y, (float)s->w, (float)s->h };   /* pixels until end_frame */
+}
+
+/* Underline and line-through: a bar per line in the text's colour, at least
+ * a physical pixel thick, on whole pixels when the text is. */
+static void line_bar(BareContext *ctx, float x0, float x1, float centre, float thick, bool snap, BareColorF color) {
+    if (snap) {
+        thick = fmaxf(1.0f, roundf(thick));
+        centre = roundf(centre - thick * 0.5f) + thick * 0.5f;
+        x0 = roundf(x0);
+        x1 = roundf(x1);
+    }
+    bare__emit_fill(ctx, (BareRect){ x0, centre - thick * 0.5f, x1 - x0, thick }, color);
+}
+
 void bare__text_emit(BareContext *ctx, const BareText *t, BareRect r, float vscale, bool snap, BareColorF color) {
     if (!t || !t->glyph_count || !t->line_count || color.a <= 0) return;
     void *font = font_handle(ctx, t->font);
     if (!font) return;
-    BareGlyph *out = bare__arena_alloc(&ctx->frame, sizeof *out * (size_t)t->glyph_count, 16);
+    int cap = t->glyph_count + t->line_count * 3;   /* room for an ellipsis per line */
+    BareGlyph *out = bare__arena_alloc(&ctx->frame, sizeof *out * (size_t)cap, 16);
     if (!out) return;
 
     float k = r.w > 0 ? ctx->scale * vscale : 0;      /* logical -> physical, visual scale included */
-    float px = t->size * ctx->scale;                  /* rasterized at physical size */
     float lead = (t->line_height - (t->ascent + t->descent)) * 0.5f;   /* half-leading, as in CSS */
     float box_w = k > 0 ? r.w / k : 0;
-    int count = 0;
+    Pen p = { ctx, font, t, k, vscale, t->size * ctx->scale, 0, 0, snap, out, 0 };   /* rasterized at physical size */
     for (int l = 0; l < t->line_count; l++) {
         const BareTextLine *line = &t->lines[l];
-        float base = r.y + ((float)l * t->line_height + lead + t->ascent) * k;
-        if (snap) base = roundf(base);
-        float pen = r.x + (box_w - line->width) * align_t(t->align) * k;
-        for (int g = line->first; g < line->first + line->count; g++) {
-            const BareShapedGlyph *sg = &t->glyphs[g];
-            float x = pen + sg->x_offset * k;
-            pen += sg->advance * k;
-            if ((unsigned char)t->str[sg->cluster] <= ' ') continue;   /* spaces and control characters */
-            int sub = 0;
-            if (snap) {   /* whole pixels plus one of three sub-pixel phases */
-                float ix = floorf(x);
-                sub = (int)((x - ix) * SUBPIXELS + 0.5f);
-                x = ix;
-                if (sub == SUBPIXELS) { sub = 0; x += 1; }
-            }
-            const BareGlyphSlot *s = glyph_get(ctx, font, t->font, sg->glyph, px, sub);
-            if (!s) { ctx->text_redraw = ctx->text_redraw || ctx->atlas_full; continue; }
-            if (s->w <= 0 || s->h <= 0) continue;
-            BareGlyph *o = &out[count++];
-            o->dst = (BareRect){ x + (float)s->left * vscale, base + (sg->y_offset * k) + (float)s->top * vscale,
-                                 (float)s->w * vscale, (float)s->h * vscale };
-            o->uv = (BareRect){ (float)s->x, (float)s->y, (float)s->w, (float)s->h };   /* pixels until end_frame */
-        }
+        p.base = r.y + ((float)l * t->line_height + lead + t->ascent) * k;
+        if (snap) p.base = roundf(p.base);
+        p.x = r.x + (box_w - line->width) * align_t(t->align) * k;
+        for (int g = line->first; g < line->first + line->count; g++)   /* spaces and controls draw nothing */
+            put_glyph(&p, &t->glyphs[g], (unsigned char)t->str[t->glyphs[g].cluster] <= ' ');
+        if (line->cut)
+            for (int g = 0; g < t->ell_count; g++) put_glyph(&p, &t->ell[g], false);
     }
-    if (!count) return;
-    if (!bare__grow(&ctx->alloc, (void **)&ctx->cmds, &ctx->cmd_cap, ctx->cmd_count + 1, sizeof *ctx->cmds)) return;
-    BareDrawCmd *cmd = &ctx->cmds[ctx->cmd_count++];
-    cmd->kind = BARE_CMD_TEXT;
-    cmd->as.text = (BareTextCmd){ ctx->atlas_id, color, out, count };
+    if (p.count) {
+        if (!bare__grow(&ctx->alloc, (void **)&ctx->cmds, &ctx->cmd_cap, ctx->cmd_count + 1, sizeof *ctx->cmds)) return;
+        BareDrawCmd *cmd = &ctx->cmds[ctx->cmd_count++];
+        cmd->kind = BARE_CMD_TEXT;
+        cmd->as.text = (BareTextCmd){ ctx->atlas_id, color, out, p.count };
+    }
+    if (!t->underline && !t->strike) return;
+    float thick = fmaxf(t->size / 14.0f * k, 1.0f);
+    for (int l = 0; l < t->line_count; l++) {
+        const BareTextLine *line = &t->lines[l];
+        if (line->width <= 0) continue;
+        float base = r.y + ((float)l * t->line_height + lead + t->ascent) * k;
+        float x0 = r.x + (box_w - line->width) * align_t(t->align) * k, x1 = x0 + line->width * k;
+        if (t->underline) line_bar(ctx, x0, x1, base + t->size * 0.11f * k, thick, snap, color);
+        if (t->strike) line_bar(ctx, x0, x1, base - t->size * 0.28f * k, thick, snap, color);
+    }
 }
 
 /* After emit: atlas uvs become 0..1 (the atlas may have grown mid-frame) and

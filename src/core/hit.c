@@ -46,6 +46,7 @@ void bare__hits_build(BareContext *ctx) {
         h->passthrough = e->box.passthrough;
         h->scroll = (uint8_t)e->box.scroll;
         h->bar = e->overlay;
+        h->focus = e->focus;
         /* Children of a clipping or scrolling box can't be hit outside it (inside its border). */
         if (e->parent < 0) {
             h->clip = everything;

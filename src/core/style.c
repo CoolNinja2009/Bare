@@ -27,19 +27,23 @@ typedef struct Field { uint16_t off, size; } Field;
 static const Field box_fields[] = {
     F(BareBox, width), F(BareBox, height), F(BareBox, min_width), F(BareBox, max_width),
     F(BareBox, min_height), F(BareBox, max_height), F(BareBox, grow), F(BareBox, shrink),
+    F(BareBox, position), F(BareBox, anchor), F(BareBox, x), F(BareBox, y),
     F(BareBox, align), F(BareBox, justify), F(BareBox, gap),
     SPAN(BareBox, padding, pad),   /* `.padding = 4` replaces a style's .pad, as CSS's shorthand does */
     F(BareBox, color), F(BareBox, border_color), F(BareBox, border), F(BareBox, radius),
     F(BareBox, shadow), F(BareBox, opacity), F(BareBox, scale), F(BareBox, offset), F(BareBox, glass),
     F(BareBox, text_color), F(BareBox, image),
-    LOOK(BareBox, hover), LOOK(BareBox, press),
-    F(BareBox, cursor), F(BareBox, passthrough), F(BareBox, clip), F(BareBox, scroll),
+    LOOK(BareBox, hover), LOOK(BareBox, press), LOOK(BareBox, focus),
+    F(BareBox, cursor), F(BareBox, focusable), F(BareBox, passthrough), F(BareBox, clip), F(BareBox, scroll),
     F(BareBox, animate), F(BareBox, animate_layout),
 };
 
 static const Field text_fields[] = {
     F(BareTextStyle, font), F(BareTextStyle, size), F(BareTextStyle, color), F(BareTextStyle, line_height),
     F(BareTextStyle, align), F(BareTextStyle, nowrap), F(BareTextStyle, animate),
+    F(BareTextStyle, max_lines), F(BareTextStyle, ellipsis), F(BareTextStyle, underline), F(BareTextStyle, strike),
+    F(BareTextStyle, letter_spacing), F(BareTextStyle, transform), F(BareTextStyle, opacity),
+    F(BareTextStyle, position), F(BareTextStyle, anchor), F(BareTextStyle, x), F(BareTextStyle, y),
 };
 
 static bool is_set(const void *p, size_t n) {
@@ -180,6 +184,7 @@ static const BareTheme dark = {
     .muted = { 150, 156, 172, 255 },
     .accent = { 40, 120, 255, 255 },
     .border = { 255, 255, 255, 26 },
+    .selection = { 40, 120, 255, 110 },
     .panel = { .padding = 20, .gap = 12, .radius = 16, .color = { 30, 32, 40, 255 },
                .border = 1, .border_color = { 255, 255, 255, 14 }, EASE_LOOKS },
     .card = { .padding = 20, .gap = 10, .radius = 16, .color = { 36, 38, 46, 255 },
@@ -192,6 +197,11 @@ static const BareTheme dark = {
                  .hover = { .color = { 70, 145, 255, 255 } }, .press = { .scale = 0.97f }, EASE_LOOKS },
     .row = { .pad = { 10, 14, 10, 14 }, .gap = 12, .radius = 10, .align = BARE_CENTER, .color = { 255, 255, 255, 0 },
              .cursor = BARE_CURSOR_HAND, .hover = { .color = { 255, 255, 255, 14 } }, EASE_LOOKS },
+    .input = { .pad = { 9, 12, 9, 12 }, .radius = 8, .color = { 22, 24, 30, 255 }, .border = 1,
+               .border_color = { 255, 255, 255, 30 }, .text_color = { 235, 238, 245, 255 },
+               .hover = { .border_color = { 255, 255, 255, 52 } },
+               .focus = { .border_color = { 40, 120, 255, 255 }, .shadow = { 0, 0, 0, 3, { 40, 120, 255, 70 } } },
+               EASE_LOOKS },
     .title = { .size = 32, .line_height = 1.2f, .animate = EASE },
     .heading = { .size = 20, .line_height = 1.25f, .animate = EASE },
     .body = { .size = 16, .animate = EASE },
@@ -205,6 +215,7 @@ static const BareTheme light = {
     .muted = { 104, 110, 124, 255 },
     .accent = { 30, 100, 240, 255 },
     .border = { 0, 0, 0, 22 },
+    .selection = { 30, 100, 240, 70 },
     .panel = { .padding = 20, .gap = 12, .radius = 16, .color = { 255, 255, 255, 255 },
                .border = 1, .border_color = { 0, 0, 0, 18 }, EASE_LOOKS },
     .card = { .padding = 20, .gap = 10, .radius = 16, .color = { 255, 255, 255, 255 },
@@ -217,6 +228,11 @@ static const BareTheme light = {
                  .hover = { .color = { 55, 125, 255, 255 } }, .press = { .scale = 0.97f }, EASE_LOOKS },
     .row = { .pad = { 10, 14, 10, 14 }, .gap = 12, .radius = 10, .align = BARE_CENTER, .color = { 0, 0, 0, 0 },
              .cursor = BARE_CURSOR_HAND, .hover = { .color = { 0, 0, 0, 12 } }, EASE_LOOKS },
+    .input = { .pad = { 9, 12, 9, 12 }, .radius = 8, .color = { 255, 255, 255, 255 }, .border = 1,
+               .border_color = { 0, 0, 0, 40 }, .text_color = { 24, 26, 32, 255 },
+               .hover = { .border_color = { 0, 0, 0, 70 } },
+               .focus = { .border_color = { 30, 100, 240, 255 }, .shadow = { 0, 0, 0, 3, { 30, 100, 240, 55 } } },
+               EASE_LOOKS },
     .title = { .size = 32, .line_height = 1.2f, .animate = EASE },
     .heading = { .size = 20, .line_height = 1.25f, .animate = EASE },
     .body = { .size = 16, .animate = EASE },

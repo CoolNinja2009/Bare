@@ -11,6 +11,10 @@
  *   5. resolve y   top-down
  *   6. position    top-down    padding, gap, justify, align
  *
+ * Absolute children (.position = BARE_ABSOLUTE) are outside the sibling chain
+ * too: each is sized and placed on its parent's box inside the border when the
+ * top-down passes reach it (its parent is already done by then).
+ *
  * Scroll boxes (scroll.c): their scrollbar rails are children outside the
  * sibling chain, so the flex passes never see them; layout sizes and places
  * them by hand. The scroll offset isn't applied here but in bare__transforms.
@@ -215,10 +219,10 @@ static float content_extent(const BareContext *ctx, const BareElem *e, int a) {
         sum += s;
         most = BARE__MAX(most, s);
     }
-    if (main_axis(&e->box) != a) return most + pads(&e->box, a);
+    if (main_axis(&e->box) != a) return most + pads(&e->box, a) + e->scroll_pad;
     if (e->child_count > 1) sum += e->box.gap * (float)(e->child_count - 1);
     if (e->virt) sum += e->lead + e->tail;
-    return sum + pads(&e->box, a);
+    return sum + pads(&e->box, a) + e->scroll_pad;
 }
 
 /* Scrollbar rails: as long as the thumb along their axis, BAR_HIT across. */
@@ -233,10 +237,35 @@ static void size_rails(BareContext *ctx, BareElem *e, int a) {
     }
 }
 
+/* The box an absolute child is placed in: its parent inside the border. */
+static float abs_room(const BareElem *p, int a) {
+    return BARE__MAX((a ? p->rect.h : p->rect.w) - 2 * p->box.border, 0.0f);
+}
+
+static float abs_size(const BareElem *p, const BareElem *e, int a) {
+    const BareBox *b = &e->box;
+    float room = abs_room(p, a);
+    switch (kind(b, a)) {
+    case FIXED: return clamp_size(spec(b, a), b, a);
+    case PERCENT: return clamp_size(room * percent(b, a), b, a);
+    case GROW: return clamp_size(room, b, a);
+    default: return BARE__MIN(e->fit[a], BARE__MAX(e->minc[a], room));   /* fit-content, as in CSS */
+    }
+}
+
+/* Which point of the parent and of the element meet: 0, 0.5 or 1 along an axis. */
+static float anchor_t(BareAnchor an, int a) {
+    int k = (int)an;
+    if (k < 0 || k > BARE_BOTTOM_RIGHT) k = 0;
+    int step = a ? k / 3 : k % 3;
+    return (float)step * 0.5f;
+}
+
 static void resolve_pass(BareContext *ctx, int a) {
     BareElem *el = ctx->elems;
     for (int i = 0; i < ctx->elem_count; i++) {
         BareElem *e = &el[i];
+        if (e->box.position == BARE_ABSOLUTE && e->parent >= 0) *size_of(e, a) = abs_size(&el[e->parent], e, a);
         if (e->first_child >= 0) {
             float inner = BARE__MAX(*size_of(e, a) - pads(&e->box, a), 0.0f);
             if (main_axis(&e->box) == a) {
@@ -286,6 +315,13 @@ static void position_pass(BareContext *ctx) {
     BareElem *el = ctx->elems;
     for (int i = 0; i < ctx->elem_count; i++) {
         BareElem *e = &el[i];
+        if (e->box.position == BARE_ABSOLUTE && e->parent >= 0) {
+            const BareElem *p = &el[e->parent];
+            float off[2] = { e->box.x, e->box.y };
+            for (int a = 0; a < 2; a++)
+                *pos_of(e, a) = (a ? p->rect.y : p->rect.x) + p->box.border +
+                                (abs_room(p, a) - *size_of(e, a)) * anchor_t(e->box.anchor, a) + off[a];
+        }
         if (e->box.scroll) place_rails(ctx, i);
         if (e->first_child < 0) continue;
         const BareBox *b = &e->box;

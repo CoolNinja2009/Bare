@@ -7,12 +7,16 @@
 #include <SDL3/SDL.h>
 #include <string.h>
 
+typedef struct TextChunk { struct TextChunk *next; int used, cap; char *data; } TextChunk;   /* data follows it */
+
 typedef struct SdlPlatform {
     SDL_Window *window;
     Uint32      wake_event;
     SDL_Cursor *cursors[BARE_CURSOR_NOT_ALLOWED + 1];
     BareCursor  cursor;
     char       *clipboard;
+    BareTextInputKind text_kind;   /* text input is on (and of this kind) */
+    TextChunk  *text;              /* copies of this poll's text events */
 } SdlPlatform;
 
 static SdlPlatform sdl;
@@ -28,6 +32,9 @@ static float to_logical(void) {
 
 static bool open_window(void *self, int width, int height, const char *title) {
     (void)self;
+    /* Bare draws the IME's composition inline in the field; the OS still
+     * shows the candidate list. */
+    SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         SDL_Log("bare: SDL_Init failed: %s", SDL_GetError());
         return false;
@@ -53,6 +60,7 @@ static void close_window(void *self) {
         if (sdl.cursors[i]) SDL_DestroyCursor(sdl.cursors[i]);
     }
     SDL_free(sdl.clipboard);
+    while (sdl.text) { TextChunk *next = sdl.text->next; SDL_free(sdl.text); sdl.text = next; }
     if (sdl.window) SDL_DestroyWindow(sdl.window);
     SDL_Quit();
     memset(&sdl, 0, sizeof sdl);
@@ -100,12 +108,51 @@ static int map_key(SDL_Keycode k, SDL_Scancode sc) {
     case SDLK_COMMA: return BARE_KEY_COMMA;
     case SDLK_PERIOD: return BARE_KEY_PERIOD;
     case SDLK_SLASH: return BARE_KEY_SLASH;
+    case SDLK_SEMICOLON: return BARE_KEY_SEMICOLON;
+    case SDLK_APOSTROPHE: return BARE_KEY_APOSTROPHE;
+    case SDLK_BACKSLASH: return BARE_KEY_BACKSLASH;
+    case SDLK_LEFTBRACKET: return BARE_KEY_LEFT_BRACKET;
+    case SDLK_RIGHTBRACKET: return BARE_KEY_RIGHT_BRACKET;
+    case SDLK_GRAVE: return BARE_KEY_GRAVE;
     default: break;
     }
     if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) return BARE_KEY_A + (int)(sc - SDL_SCANCODE_A);
     if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) return BARE_KEY_1 + (int)(sc - SDL_SCANCODE_1);
     if (sc == SDL_SCANCODE_0) return BARE_KEY_0;
     return BARE_KEY_NONE;
+}
+
+static int map_mods(SDL_Keymod m) {
+    int out = 0;
+    if (m & SDL_KMOD_SHIFT) out |= BARE_MOD_SHIFT;
+    if (m & SDL_KMOD_CTRL) out |= BARE_MOD_CTRL;
+    if (m & SDL_KMOD_ALT) out |= BARE_MOD_ALT;
+    if (m & SDL_KMOD_GUI) out |= BARE_MOD_SUPER;
+    return out;
+}
+
+/* Text event strings are SDL's until the next poll: copies live in chunks
+ * that never move, reused from the next poll_events call on. */
+static const char *keep_text(const char *s, int *len) {
+    int n = s ? (int)SDL_strlen(s) : 0;
+    *len = n;
+    TextChunk *c = sdl.text;
+    while (c && c->cap - c->used < n + 1) c = c->next;
+    if (!c) {
+        int cap = n + 1 > 4096 ? n + 1 : 4096;
+        c = SDL_malloc(sizeof *c + (size_t)cap);
+        if (!c) { *len = 0; return ""; }
+        c->data = (char *)(c + 1);
+        c->used = 0;
+        c->cap = cap;
+        c->next = sdl.text;
+        sdl.text = c;
+    }
+    char *at = c->data + c->used;
+    if (n) SDL_memcpy(at, s, (size_t)n);
+    at[n] = 0;
+    c->used += n + 1;
+    return at;
 }
 
 /* Translates one SDL event; returns false for events Bare doesn't use. */
@@ -169,8 +216,27 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         if (out->as.key.key == BARE_KEY_NONE) return false;
         out->as.key.down = e->key.down;
         out->as.key.repeat = e->key.repeat;
-        out->as.key.mods = e->key.mod;
+        out->as.key.mods = map_mods(e->key.mod);
         return true;
+    case SDL_EVENT_TEXT_INPUT:
+        out->kind = BARE_EVENT_TEXT;
+        out->as.text.utf8 = keep_text(e->text.text, &out->as.text.len);
+        out->as.text.cursor = out->as.text.len;
+        return out->as.text.len > 0;
+    case SDL_EVENT_TEXT_EDITING: {
+        out->kind = BARE_EVENT_COMPOSITION;
+        const char *t = keep_text(e->edit.text, &out->as.text.len);
+        out->as.text.utf8 = t;
+        /* SDL's cursor counts characters; Bare's is a byte offset. */
+        int cursor = out->as.text.len;
+        for (int i = 0, chars = 0; e->edit.start >= 0 && i <= out->as.text.len; i++) {
+            if (i == out->as.text.len || (t[i] & 0xC0) != 0x80) {
+                if (chars++ == e->edit.start) { cursor = i; break; }
+            }
+        }
+        out->as.text.cursor = cursor;
+        return true;
+    }
     default:
         if (e->type == sdl.wake_event) {
             out->kind = BARE_EVENT_EXPOSE;
@@ -183,6 +249,7 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
 static int poll_events(void *self, BareEvent *out, int max, double wait) {
     (void)self;
     int n = 0;
+    for (TextChunk *c = sdl.text; c; c = c->next) c->used = 0;   /* the last batch has been handled */
     SDL_Event e;
     if (wait != 0 && max > 0) {
         Sint32 ms = wait < 0 ? -1 : (Sint32)(wait * 1000.0);
@@ -232,6 +299,30 @@ static const char *clipboard_get(void *self) {
 
 static void clipboard_set(void *self, const char *text) { (void)self; SDL_SetClipboardText(text); }
 
+static void start_text_input(void *self, BareTextInputKind kind, BareRect caret) {
+    (void)self;
+    if (kind != sdl.text_kind) {
+        if (sdl.text_kind) SDL_StopTextInput(sdl.window);
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER,
+                              kind == BARE_TEXT_INPUT_PASSWORD ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN
+                                                                : SDL_TEXTINPUT_TYPE_TEXT);
+        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, kind == BARE_TEXT_INPUT_MULTILINE);
+        SDL_StartTextInputWithProperties(sdl.window, props);
+        SDL_DestroyProperties(props);
+        sdl.text_kind = kind;
+    }
+    float k = to_logical();   /* logical -> window coordinates */
+    SDL_Rect r = { (int)(caret.x / k), (int)(caret.y / k), (int)(caret.w / k) + 1, (int)(caret.h / k) + 1 };
+    SDL_SetTextInputArea(sdl.window, &r, 0);
+}
+
+static void stop_text_input(void *self) {
+    (void)self;
+    if (sdl.text_kind) SDL_StopTextInput(sdl.window);
+    sdl.text_kind = BARE_TEXT_INPUT_NONE;
+}
+
 static void *native(void *self, BareNativeKind what) {
     (void)self;
     return what == BARE_NATIVE_SDL_WINDOW ? sdl.window : NULL;
@@ -251,6 +342,8 @@ BarePlatform bare__sdl3_platform(void) {
         .set_title = set_title,
         .clipboard_get = clipboard_get,
         .clipboard_set = clipboard_set,
+        .start_text_input = start_text_input,
+        .stop_text_input = stop_text_input,
         .native = native,
         .run = NULL,
     };

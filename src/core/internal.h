@@ -92,6 +92,7 @@ typedef struct BareNode {
     uint8_t  bars;             /* scrollbar rails present last frame: bit 0 = x, bit 1 = y */
     uint8_t  scroll_flags;     /* BARE__SCROLL_* */
     uint32_t anim;             /* animation set index + 1; 0 = never animated (anim.c) */
+    struct BareEditState *edit;/* text fields: caret, selection, undo (edit.c); NULL until focused */
     bool     dup_warned;       /* a duplicate of this explicit ID was reported once */
 } BareNode;
 
@@ -111,7 +112,16 @@ void bare__store_free(BareContext *ctx);
 
 /* ---- text (text.c, font_stb.c) ------------------------------------------ */
 
-typedef struct BareTextLine { int first, count; float width; } BareTextLine;
+typedef struct BareTextLine { int first, count; float width; bool cut; } BareTextLine;   /* cut: ends in the ellipsis */
+
+/* What a text field draws with its text (field.c): selection behind, caret
+ * and IME underline in front. Byte offsets into the shown text. */
+typedef struct BareTextDeco {
+    int        caret;   bool upstream, caret_on, block;
+    int        sel_a, sel_b;            /* empty when equal */
+    int        comp_a, comp_b;          /* IME composition, underlined */
+    BareColor  caret_color, sel_color;
+} BareTextDeco;
 
 /* A bare_text element's payload, in the frame arena. Shaped at its logical
  * size when declared; wrapped by layout pass 3; drawn by emit. */
@@ -121,12 +131,17 @@ typedef struct BareText {
     float            size, line_height;     /* pixels; line_height already multiplied */
     BareAlign        align;
     bool             nowrap;
+    bool             ellipsis, underline, strike;
+    int              max_lines;             /* 0 = no limit */
     BareColor        color;                 /* alpha 0 = inherited */
+    BareShapedGlyph  ell[3]; int ell_count; /* the ellipsis (U+2026, or "..." if the font lacks it) */
+    float            ell_w;
     BareShapedGlyph *glyphs; int glyph_count;
     float            ascent, descent;       /* at size */
     float            max_line;              /* widest line without wrapping */
     float            min_word;              /* widest run that can't be broken at a space or hyphen */
     BareTextLine    *lines;  int line_count;
+    BareTextDeco    *deco;                  /* text fields only */
 } BareText;
 
 typedef struct BareFontRec {
@@ -153,6 +168,16 @@ void  bare__text_emit(BareContext *ctx, const BareText *t, BareRect r, float vsc
 void  bare__text_end_frame(BareContext *ctx);                  /* atlas uploads, uv normalisation */
 void  bare__text_free(BareContext *ctx);
 
+/* caret.c: positions in wrapped text (byte offsets; text-local logical pixels) */
+int      bare__text_line_start(const BareText *t, int line);
+int      bare__text_line_end(const BareText *t, int line, bool *upstream);
+int      bare__text_line_of(const BareText *t, int offset, bool upstream);
+float    bare__text_x_on_line(const BareText *t, int line, int offset, float box_w);
+BareRect bare__text_caret(const BareText *t, int offset, bool upstream, float box_w);
+int      bare__text_offset_at(const BareText *t, int line, float x, float box_w, bool *upstream);
+int      bare__text_hit(const BareText *t, float x, float y, float box_w, bool *upstream);
+int      bare__text_range_rects(const BareText *t, int a, int b, float box_w, BareRect *out, int cap);
+
 /* ---- element tree ------------------------------------------------------- */
 
 typedef struct BareElem {
@@ -178,6 +203,9 @@ typedef struct BareElem {
     uint8_t     overlay;            /* 1 / 2: the x / y scrollbar rail of its parent; outside the flex flow */
     int32_t     bar[2];             /* element index of its x / y rail, 0 = none */
     float       content[2];         /* content size per axis, padding included (layout) */
+    uint8_t     focus;              /* BARE__FOCUS_* */
+    float       scroll_pad;         /* added to the content (a text field's caret past the last glyph) */
+    bool        no_bars;            /* a scroll box without scrollbars (single-line fields) */
     bool        virt;               /* holds a bare_visible run: */
     int         lead_at, tail_at;   /*   space for the items not declared goes before these children */
     float       lead, tail;
@@ -266,7 +294,32 @@ typedef struct BareHit {
     bool     passthrough;
     uint8_t  scroll;            /* BareScroll */
     uint8_t  bar;               /* 1 / 2: the x / y scrollbar rail of its parent */
+    uint8_t  focus;             /* BARE__FOCUS_* */
 } BareHit;
+
+enum { BARE__FOCUS_ABLE = 1, BARE__FOCUS_FIELD = 2, BARE__FOCUS_TABS = 4, BARE__FOCUS_LINE = 8 };
+
+/* Keyboard input in arrival order, so typing, editing keys and IME text
+ * interleave right (focus.c). Kept until the focused field consumes it. */
+typedef struct BareKeyEv {
+    uint8_t kind;               /* BARE__IN_* */
+    uint8_t mods;               /* BARE_MOD_* */
+    bool    repeat;
+    int     key;                /* BareKey */
+    int     text, len, cursor;  /* text: into ctx->in_text */
+} BareKeyEv;
+
+enum { BARE__IN_KEY, BARE__IN_TEXT, BARE__IN_COMPOSE, BARE__IN_ACTION };
+
+typedef struct BareKeyBinding { int key; uint8_t mods; uint8_t action; } BareKeyBinding;
+
+/* A text field declared this frame (field.c), fixed up after layout. */
+typedef struct BareFieldFrame {
+    int      box, text;         /* element indices */
+    BareId   id;
+    bool     focused, multiline;
+    bool     follow;            /* the caret moved: scroll it into view */
+} BareFieldFrame;
 
 /* An element and its ancestors (innermost first), by ID. */
 typedef struct BareChain { BareId ids[BARE__MAX_DEPTH + 1]; int count; } BareChain;
@@ -295,6 +348,12 @@ struct BareContext {
     uint8_t       key_down[BARE_KEY_COUNT_], key_pressed[BARE_KEY_COUNT_];
     BareCursor    cursor;
     bool          mouse_moved;       /* since the last frame ended */
+    BareVec2      press_pos;         /* where the left button last went down */
+    double        press_time;
+    int           click_count;       /* 1, 2 (double click), 3 (triple) for the last press */
+    bool          press_new;         /* the left button went down since the last frame, */
+    BareChain     press_began;       /*   on these (kept even if it's already released) */
+    bool          window_focused;
     BareId        drag_id;           /* scroll container whose scrollbar thumb is held (0 = none) */
     int           drag_axis;
     float         drag_grab;         /* where along the thumb it was grabbed, logical pixels */
@@ -341,6 +400,24 @@ struct BareContext {
     const void   *style_warned[8];  /* broken style chains already reported */
     int           style_warned_count;
 
+    /* Focus and text fields (focus.c, edit.c, field.c). */
+    BareId        focus_id;          /* 0 = nothing focused */
+    uint8_t       focus_kind;        /* BARE__FOCUS_* of the focused element, as last declared */
+    uint8_t       focus_how;         /* 1 = mouse, 2 = keyboard (Tab), 3 = bare_focus */
+    bool          focus_declared;    /* the focused element was declared this frame */
+    BareKeyEv    *in;      int in_count, in_cap;       /* the keyboard queue */
+    char         *in_text; int in_text_len, in_text_cap;
+    int           in_take;           /* entries the focused field takes this frame */
+    BareKeyBinding *binds; int bind_count, bind_cap;   /* NULL until first used: the defaults */
+    bool          mac_keys;
+    const char *(*clip_get)(void *user);
+    void        (*clip_set)(void *user, const char *text);
+    void         *clip_user;
+    char         *clip_own;  size_t clip_own_size;       /* headless clipboard */
+    BareFieldFrame *fields; int field_count, field_cap;
+    BareTextInputKind ti_kind;       /* what the focused field wants from the platform */
+    BareRect      ti_rect;
+
     BareLogFn     log;
     void         *log_user;
 };
@@ -360,6 +437,8 @@ void bare__apply_look(BareBox *b, const BareLook *l);
 
 /* tree.c */
 int  bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int line);
+int  bare__text_push(BareContext *ctx, const char *str, int len, const BareTextStyle *style, const char *file, int line);
+BareState bare__state_of(BareContext *ctx, int index);
 void bare__tree_begin(BareContext *ctx);
 void bare__tree_end(BareContext *ctx);
 
@@ -387,6 +466,30 @@ bool bare__input_end(BareContext *ctx);         /* clears one-frame input; true 
 
 /* emit.c */
 void bare__emit(BareContext *ctx);
+void bare__emit_fill(BareContext *ctx, BareRect physical, BareColorF color);
+
+/* focus.c */
+void bare__focus_begin(BareContext *ctx);       /* Tab / Escape at the head of the queue; this frame's share */
+void bare__focus_end(BareContext *ctx);         /* consumed input dropped; focus on a vanished element cleared */
+void bare__focus_event(BareContext *ctx, const BareEvent *e);   /* keys and text into the queue */
+void bare__focus_press(BareContext *ctx, int hit);              /* left button down on a hit (-1: nothing) */
+void bare__focus_set(BareContext *ctx, BareId id, int how);
+void bare__focus_free(BareContext *ctx);
+int  bare__mods(const BareContext *ctx);                         /* BARE_MOD_* held now */
+const char *bare__clipboard_get(BareContext *ctx);
+void bare__clipboard_set(BareContext *ctx, const char *text);
+void bare__scroll_into_view(BareContext *ctx, int hit);           /* scroll ancestors so a hit shows */
+
+/* edit.c: the editing engine of a field */
+typedef struct BareEditState BareEditState;
+BareEditAction bare__edit_lookup(BareContext *ctx, int key, int mods, bool *extend);
+bool bare__edit_types(const BareContext *ctx, int key, int mods);       /* a key that types text (consumed by a focused field) */
+void bare__edit_release(BareContext *ctx, BareEditState *ed);
+
+/* field.c */
+void bare__fields_layout(BareContext *ctx);     /* after layout: scroll to the caret, the IME rect */
+void bare__field_emit_under(BareContext *ctx, const BareText *t, BareRect r, float k, bool snap, float opacity);
+void bare__field_emit_over(BareContext *ctx, const BareText *t, BareRect r, float k, bool snap, BareColorF ink);
 
 /* scroll.c */
 #define BARE__BAR_HIT   14.0f   /* scrollbar rail thickness: the part that takes the mouse */

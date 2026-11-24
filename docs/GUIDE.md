@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M7: styles and themes) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M7: styles and themes, plus M7.5's text fields) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -14,6 +14,7 @@ How to build UIs with Bare, for people who know HTML and CSS. Everything here wo
 8. [Components and styles](#8-components-and-styles)
 9. [Lists and IDs](#9-lists-and-ids)
 10. [Clicks, hover and keys](#10-clicks-hover-and-keys)
+    - [Text fields and keyboard focus](#text-fields-and-keyboard-focus)
 11. [Movement](#11-movement)
 12. [Liquid glass](#12-liquid-glass)
 13. [Canvases and your own shaders](#13-canvases-and-your-own-shaders)
@@ -136,6 +137,23 @@ bare_stack(.align = BARE_CENTER) {  /* on top of each other, like position: abso
 Containers are boxes too: they take every setting `bare_box` does (colour, radius, shadow...). The window itself is a
 column, so top-level elements go top to bottom.
 
+**Taking an element out of the flow** (CSS `position: absolute`): `.position = BARE_ABSOLUTE` places any element,
+text included, on its parent instead of after its siblings. It takes no room. `.anchor` picks which point of the
+parent and of the element meet (`BARE_TOP_LEFT` by default, `BARE_TOP`, `BARE_TOP_RIGHT`, `BARE_LEFT`,
+`BARE_MIDDLE`, `BARE_RIGHT`, `BARE_BOTTOM_LEFT`, `BARE_BOTTOM`, `BARE_BOTTOM_RIGHT`), and `.x`, `.y` move it from
+there (right and down). Sizes work as usual: `BARE_GROW` fills the parent, a percent is of the parent. Declare it
+last to draw it on top:
+
+```c
+bare_row(.style = &t->button) {
+    bare_text("Inbox");
+    bare_row(.position = BARE_ABSOLUTE, .anchor = BARE_TOP_RIGHT, .x = 8, .y = -8,   /* a badge on the corner */
+             .pad = { 2, 6, 2, 6 }, .radius = 8, .color = BARE_RGB(255, 90, 110)) {
+        bare_text("3", .size = 11);
+    }
+}
+```
+
 Don't `break`, `return` or `goto` out of a container block: it would stay open, and what follows would land inside it.
 If it happens, Bare logs the container's file and line at the end of the frame and closes it.
 
@@ -226,6 +244,11 @@ its longest word before anything overflows, like inline text in a flex item. `
 - `.align = BARE_CENTER` or `BARE_END` aligns each wrapped line inside the text's box. Give the text the width to
   align in: `.align = BARE_STRETCH` on a column, or a parent of fixed width.
 - `.nowrap = true` keeps it on one line.
+- `.max_lines = 2` cuts it after two lines; `.ellipsis = true` ends the cut with "…" (CSS `line-clamp`). With
+  `.nowrap`, `.ellipsis` cuts a line that doesn't fit its box (`text-overflow: ellipsis`), and the text can then be
+  squeezed narrower than its content.
+- `.underline`, `.strike` (line-through), `.letter_spacing = 2` (pixels after each character),
+  `.transform = BARE_UPPERCASE` or `BARE_LOWERCASE`, `.opacity = 0.5f`.
 - **Colour is inherited**, like CSS `color`: set `.text_color` on any container and the text inside takes it, unless
   the text sets its own `.color`. `.hover = { .text_color = ... }` works, and `.animate` fades it.
 - Strings are UTF-8 and copied, so a temporary buffer is fine.
@@ -240,8 +263,8 @@ bare_column(.width = 320, .gap = 6, .text_color = BARE_RGB(200, 205, 220)) {
 **Fonts.** The default font is Inter (Latin and common symbols), built in, so text works with no setup. Load others
 with `BareFont f = bare_font_load("fonts/Display.ttf");` once, then `.font = f`. `bare_font_from_memory(data, size)`
 uses a font you've embedded (the data must stay alive). Text is rasterized at the screen's real pixel size, so it's
-sharp at 150% and 200%. Bold and italic need their own font files for now *(weights, letter spacing, underline and
-ellipsis are coming in M10)*.
+sharp at 150% and 200%. Bold and italic need their own font files for now *(`.weight`, `.italic`, text shadow and
+mixed styles in one paragraph are coming in M7.5)*.
 
 **Images.** `bare_image_load("photo.png")` (PNG, JPEG, BMP, GIF's first frame, TGA) once, then show it with `.image`
 on any box. It stretches to the box and is cut to its `.radius`, so a round avatar is:
@@ -432,7 +455,52 @@ goes down (and again on auto-repeat, like `keydown`). Letters follow the user's 
 if (bare_key_down(BARE_KEY_CTRL) && bare_key_pressed(BARE_KEY_S)) save();
 ```
 
-`bare_mouse()` is the mouse position. Typing text into fields is later (text input is its own milestone).
+`bare_mouse()` is the mouse position.
+
+### Text fields and keyboard focus
+
+`bare_input` edits a `char` buffer you own, in place (UTF-8, always NUL-terminated, never past its size):
+
+```c
+static char name[64], bio[1024];
+bare_input(name, sizeof name, .placeholder = "Your name", .width = BARE_GROW);
+bare_input(bio, sizeof bio, .multiline = true, .lines = 5, .width = BARE_GROW);
+if (bare_input(search, sizeof search, .placeholder = "Search").changed) refilter();
+```
+
+Everything a native text box does is built in, with nothing to map: click, drag, double-click a word, triple-click a
+line; arrows, Ctrl+arrows by word, Home / End, PageUp / PageDown; Shift with any of them selects; Ctrl+A; Backspace /
+Delete by character or (with Ctrl) by word; cut, copy, paste; undo and redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z);
+Insert for overwrite; IME composition for Chinese, Japanese and Korean. On macOS the keys are the Mac ones (Cmd,
+Option). The field scrolls to keep the caret in view, and a focused field uses no CPU while you're not typing.
+
+- It returns a `BareState` with `.focused`, `.changed` (the text changed this frame) and `.submitted` (Enter in a
+  one-line field).
+- Options: `.placeholder`, `.multiline` (Enter makes a new line), `.lines` (its height, multiline), `.password`
+  (shows dots), `.read_only` (select and copy only), `.tabs` (Tab types a tab instead of moving focus), `.width`,
+  `.height`, `.size`, `.font`, `.color`, `.caret` and `.selection` colours, and `.style` (default: the theme's
+  `input` look) or `.text_style`.
+- Give it an `.id` when its position in the code can change (in a list, say): the caret and undo history belong to
+  the id.
+
+**Focus.** Clicking a field focuses it; Tab and Shift+Tab move through focusable elements in the order they're
+declared; Escape or clicking elsewhere leaves. Any element can take focus with `.focusable = true`, and `.focus` is a
+look like `.hover` (a focus ring). `bare_focus(BARE_ID("email"))` moves focus from code, `bare_focused()` says
+which id has it. While a field has focus it takes the keys it uses, so `bare_key_pressed` shortcuts don't fire
+under it.
+
+```c
+bare_row(.style = &t->primary, .focusable = true, .focus = { .shadow = { 0, 0, 0, 3, BARE_RGBA(40, 120, 255, 90) } }) {
+    bare_text("Save");
+    BareState b = bare_this();
+    if (b.clicked || (b.focused && bare_key_pressed(BARE_KEY_ENTER))) save();
+}
+```
+
+**Your own shortcuts and buttons.** `bare_edit_bind(BARE_KEY_D, BARE_MOD_SHORTCUT, BARE_EDIT_DELETE_LINE_LEFT)`
+adds or remaps a key (`BARE_MOD_SHORTCUT` is Ctrl, or Cmd on a Mac); `bare_edit(BARE_ID("bio"), BARE_EDIT_UNDO)`
+runs any editing action from a menu or toolbar button. `examples/editor.c` is a sign-up form and a search box
+filtering 5,000 rows.
 
 ## 11. Movement
 
@@ -604,7 +672,8 @@ and `bench/` measures it against the same simulation running in Edge.
 | `devicePixelRatio` | `bare_pixel_scale()` |
 | `display: flex; flex-direction: row` | `bare_row() { }` |
 | `flex-direction: column` | `bare_column() { }` |
-| `position: absolute` layers | `bare_stack() { }` + `.offset` |
+| `position: absolute; top: 0; right: 0` | `.position = BARE_ABSOLUTE, .anchor = BARE_TOP_RIGHT` (+ `.x`, `.y`) |
+| overlapping layers | `bare_stack() { }` |
 | `width: 240px` / `50%` / `fit-content` | `.width = 240` / `BARE_PERCENT(50)` / leave it out |
 | `flex: 1` / `flex: 2` | `.width = BARE_GROW` / `+ .grow = 2` |
 | `min-width`, `max-width` | `.min_width`, `.max_width` |
@@ -636,6 +705,11 @@ and `bench/` measures it against the same simulation running in Edge.
 | `color` on a parent (inherited) | `.text_color = ...` on the container |
 | `text-align: center` | `.align = BARE_CENTER` on the text |
 | `white-space: nowrap` | `.nowrap = true` |
+| `text-overflow: ellipsis` / `line-clamp: 2` | `.nowrap = true, .ellipsis = true` / `.max_lines = 2, .ellipsis = true` |
+| `text-decoration: underline / line-through` | `.underline = true` / `.strike = true` |
+| `letter-spacing: 2px`, `text-transform: uppercase` | `.letter_spacing = 2`, `.transform = BARE_UPPERCASE` |
+| `<input>`, `<textarea>`, `type=password` | `bare_input(buf, sizeof buf, ...)`, `.multiline = true`, `.password = true` |
+| `tabindex="0"`, `:focus`, `.focus()` | `.focusable = true`, `.focus = { ... }`, `bare_focus(id)` |
 | `@font-face` | `bare_font_load("x.ttf")`, then `.font = f` |
 | `<img src="a.png">`, `border-radius: 50%` | `.image = bare_image_load("a.png")`, `.radius = size / 2` |
 | `overflow: hidden` / `overflow: auto` | `.clip = true` / `.scroll = BARE_SCROLL_Y` |
@@ -665,4 +739,4 @@ and `bench/` measures it against the same simulation running in Edge.
 
 Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `styles.c`, `glass_motion/` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `styles.c`, `editor.c`, `glass_motion/` and `fluid/` today.

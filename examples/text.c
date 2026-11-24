@@ -5,6 +5,9 @@
  * - start / centre / end alignment of wrapped lines
  * - a profile card with a round avatar image (.radius = half its size)
  * - a counter with bare_textf, and a button whose label changes colour on hover
+ * - formatting: underline, strike, letter spacing, upper case, opacity, and
+ *   text cut to two lines or one with an ellipsis
+ * - a "NEW" badge pinned to the card's corner with .position = BARE_ABSOLUTE
  * - hover the paragraph: a liquid glass loupe magnifies the text under it */
 #include "bare.h"
 
@@ -48,11 +51,26 @@ static BareState page(BareImage avatar, int *clicks) {
 
             bare_text("Accents and symbols: café, naïve, Ångström, 25 °C, 3 × 4 − 2, “quotes”, € £ ¥ — ok",
                       .size = 15, .color = BARE_RGB(150, 155, 170));
+
+            bare_row(.gap = 22, .align = BARE_CENTER) {
+                bare_text("Underlined", .size = 15, .underline = true);
+                bare_text("Struck through", .size = 15, .strike = true, .color = BARE_RGB(150, 155, 170));
+                bare_text("Spaced capitals", .size = 13, .letter_spacing = 2.5f, .transform = BARE_UPPERCASE,
+                          .color = BARE_RGB(120, 170, 255));
+                bare_text("Half opacity", .size = 15, .opacity = 0.5f);
+            }
+            bare_text(about, .size = 15, .max_lines = 2, .ellipsis = true, .color = BARE_RGB(150, 155, 170));
+            bare_text(about, .size = 15, .nowrap = true, .ellipsis = true, .color = BARE_RGB(150, 155, 170));
         }
 
         /* The profile card. */
         bare_column(.width = 300, .padding = 26, .gap = 16, .radius = 20, .align = BARE_CENTER,
                     .color = BARE_RGB(30, 33, 44), .shadow = BARE_SHADOW_SOFT) {
+            /* Out of the column's flow: pinned to its top right corner. */
+            bare_row(.position = BARE_ABSOLUTE, .anchor = BARE_TOP_RIGHT, .x = -14, .y = 14,
+                     .pad = { 4, 9, 4, 9 }, .radius = 8, .color = BARE_RGB(255, 90, 110)) {
+                bare_text("NEW", .size = 11, .letter_spacing = 1);
+            }
             bare_box(.width = 112, .height = 112, .radius = 56, .image = avatar,
                      .border = 3, .border_color = BARE_RGB(255, 255, 255));
             bare_text("Sunset Hills", .size = 22);

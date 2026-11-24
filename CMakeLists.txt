@@ -56,6 +56,10 @@ add_library(bare_core STATIC
     src/core/style.c
     src/core/gpu.c
     src/core/text.c
+    src/core/caret.c
+    src/core/focus.c
+    src/core/edit.c
+    src/core/field.c
     src/core/font_stb.c
     src/core/image.c
 )

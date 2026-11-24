@@ -318,6 +318,53 @@ TEST(steady_state_frames_do_not_grow_memory) {
     CHECK(ctx->elem_cap == elem_cap && ctx->store.node_cap == node_cap && ctx->store.cap == table);
 }
 
+/* ---- absolute positioning ----------------------------------------------- */
+
+TEST(absolute_children_take_no_room) {
+    begin(800, 600);
+    bare_row(.padding = 10, .gap = 4) {
+        bare_box(.width = 30, .height = 20);
+        bare_box(.position = BARE_ABSOLUTE, .width = 500, .height = 500);
+        bare_box(.width = 50, .height = 40);
+    }
+    end();
+    CHECK_RECT(1, 0, 0, 10 + 30 + 4 + 50 + 10, 60);   /* as if it weren't there */
+    CHECK_RECT(2, 10, 10, 30, 20);
+    CHECK_RECT(3, 0, 0, 500, 500);                     /* top left of the parent, padding ignored */
+    CHECK_RECT(4, 44, 10, 50, 40);
+}
+
+TEST(absolute_anchors_and_offsets) {
+    begin(800, 600);
+    bare_row(.width = 200, .height = 100, .border = 2) {
+        bare_box(.position = BARE_ABSOLUTE, .anchor = BARE_TOP_RIGHT, .x = 4, .y = -4, .width = 20, .height = 10);
+        bare_box(.position = BARE_ABSOLUTE, .anchor = BARE_MIDDLE, .width = 20, .height = 10);
+        bare_box(.position = BARE_ABSOLUTE, .anchor = BARE_BOTTOM_LEFT, .x = 3, .width = 20, .height = 10);
+        bare_box(.position = BARE_ABSOLUTE, .width = BARE_GROW, .height = BARE_PERCENT(50));
+    }
+    end();
+    CHECK_RECT(2, 2 + 196 - 20 + 4, 2 - 4, 20, 10);   /* inside the 2 px border */
+    CHECK_RECT(3, 90, 45, 20, 10);
+    CHECK_RECT(4, 2 + 3, 2 + 96 - 10, 20, 10);
+    CHECK_RECT(5, 2, 2, 196, 48);
+}
+
+TEST(absolute_children_fit_their_content_and_ride_with_the_parent) {
+    begin(800, 600);
+    bare_column(.padding = 20) {
+        bare_box(.width = 300, .height = 50);
+        bare_row(.width = 100, .height = 40) {
+            bare_row(.position = BARE_ABSOLUTE, .anchor = BARE_BOTTOM, .y = 10, .padding = 5) {
+                bare_box(.width = 30, .height = 6);
+            }
+        }
+    }
+    end();
+    CHECK_RECT(3, 20, 70, 100, 40);
+    CHECK_RECT(4, 20 + (100 - 40) / 2.0f, 70 + 40 - 16 + 10, 40, 16);
+    CHECK_RECT(5, 20 + 30 + 5, 70 + 24 + 10 + 5, 30, 6);
+}
+
 int main(void) {
     RUN(fixed_sizes);
     RUN(fit_wraps_children_with_padding_and_gap);
@@ -342,6 +389,9 @@ int main(void) {
     RUN(undeclared_nodes_are_evicted);
     RUN(store_handles_many_nodes);
     RUN(steady_state_frames_do_not_grow_memory);
+    RUN(absolute_children_take_no_room);
+    RUN(absolute_anchors_and_offsets);
+    RUN(absolute_children_fit_their_content_and_ride_with_the_parent);
     bare_ctx_destroy(ctx);
     return test_report();
 }

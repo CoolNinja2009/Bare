@@ -1,6 +1,7 @@
 /* emit.c: element tree -> draw list in physical pixels (ARCHITECTURE §9). */
 #include "internal.h"
 #include <math.h>
+#include <string.h>
 
 static const BareColor NONE = { 0, 0, 0, 0 };
 
@@ -15,6 +16,18 @@ static BareDrawCmd *push_cmd(BareContext *ctx) {
         return NULL;
     }
     return &ctx->cmds[ctx->cmd_count++];
+}
+
+/* A plain filled rectangle (selections, carets). */
+void bare__emit_fill(BareContext *ctx, BareRect r, BareColorF color) {
+    if (r.w <= 0 || r.h <= 0 || color.a <= 0) return;
+    BareDrawCmd *cmd = push_cmd(ctx);
+    if (!cmd) return;
+    cmd->kind = BARE_CMD_RECT;
+    BareRectCmd *rc = &cmd->as.rect;
+    memset(rc, 0, sizeof *rc);
+    rc->rect = r;
+    rc->fill = color;
 }
 
 /* Snaps the layout rect to whole physical pixels (edges, not sizes, so
@@ -223,7 +236,11 @@ void bare__emit(BareContext *ctx) {
         bool seen = r.w > 0 && r.h > 0 && overlaps(ink_bounds(e, r, s), open_rect[depth]);
         if (seen && e->text) {
             bool snap = e->vscale == 1.0f && !e->moving;
-            bare__text_emit(ctx, e->text, r, e->vscale, snap, color_f(ink ? ink[i] : ctx->theme.text, e->opacity));
+            BareColorF tc = color_f(ink ? ink[i] : ctx->theme.text, e->opacity);
+            float k = s * e->vscale;
+            if (e->text->deco) bare__field_emit_under(ctx, e->text, r, k, snap, e->opacity);   /* selection */
+            bare__text_emit(ctx, e->text, r, e->vscale, snap, tc);
+            if (e->text->deco) bare__field_emit_over(ctx, e->text, r, k, snap, tc);           /* caret */
             continue;
         }
         if (seen) emit_box(ctx, i, r, &last_glass_cmd, &last_glass_parent);

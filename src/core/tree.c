@@ -71,7 +71,7 @@ int bare__tree_push(BareContext *ctx, const BareBox *in, const char *file, int l
     memset(e, 0, sizeof *e);
     bare__style_box(ctx, in, &e->box, file, line);   /* its style chain under it */
     const BareBox *box = &e->box;
-    const BareLook hover = box->hover, press = box->press;
+    const BareLook hover = box->hover, press = box->press, focus = box->focus;
     const BareCursor cursor = box->cursor;
     e->file = file;
     e->line = line;
@@ -83,18 +83,30 @@ int bare__tree_push(BareContext *ctx, const BareBox *in, const char *file, int l
     if (e->parent >= 0) {
         BareElem *p = &ctx->elems[e->parent];
         parent_id = p->id;
-        if (p->last_child >= 0) ctx->elems[p->last_child].next_sibling = index;
-        else p->first_child = index;
-        p->last_child = index;
-        p->child_count++;
+        /* Absolute children stay out of the sibling chain, so the flex passes
+         * never see them; layout sizes and places them on their parent. */
+        if (e->box.position != BARE_ABSOLUTE) {
+            if (p->last_child >= 0) ctx->elems[p->last_child].next_sibling = index;
+            else p->first_child = index;
+            p->last_child = index;
+            p->child_count++;
+        }
     }
     e->id = make_id(ctx, index, parent_id);
     e->node = bare__store_get(ctx, e->id, NULL);
     if (e->node >= 0) ctx->store.nodes[e->node].last_frame = ctx->frame_index;
 
-    /* Looks apply in the same frame the state is known: hover, then press on top. */
+    /* Focus: a focusable element tells focus.c it's still there. */
+    bool focused = e->id == ctx->focus_id;
+    if (box->focusable) {
+        e->focus = BARE__FOCUS_ABLE;
+        if (focused) { ctx->focus_declared = true; ctx->focus_kind = e->focus; }
+    }
+
+    /* Looks apply in the same frame the state is known: hover, focus, then press on top. */
     bool hovered = bare__chain_has(&ctx->hover, e->id);
     if (hovered) bare__apply_look(&e->box, &hover);
+    if (focused) bare__apply_look(&e->box, &focus);
     if (bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id)) bare__apply_look(&e->box, &press);
     /* The innermost hovered element with a cursor wins; it's declared last. */
     if (hovered && cursor != BARE_CURSOR_DEFAULT) ctx->cursor = cursor;
@@ -129,7 +141,7 @@ static BareContext *need_frame(const char *what, const char *file, int line) {
     return ctx;
 }
 
-static BareState state_of(BareContext *ctx, int index) {
+BareState bare__state_of(BareContext *ctx, int index) {
     BareState s;
     memset(&s, 0, sizeof s);
     if (index < 0) return s;
@@ -138,6 +150,7 @@ static BareState state_of(BareContext *ctx, int index) {
     s.pressed = bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id);
     s.clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_LEFT], e->id);
     s.right_clicked = bare__chain_has(&ctx->clicked[BARE__PRESS_RIGHT], e->id);
+    s.focused = e->id == ctx->focus_id;
     if (e->node >= 0) {
         s.rect = ctx->store.nodes[e->node].rect;   /* last frame's */
         s.scroll = ctx->store.nodes[e->node].scroll;
@@ -149,13 +162,12 @@ BareState bare_box_(const BareBox *box, const char *file, int line) {
     BareContext *ctx = need_frame("bare_box", file, line);
     if (!ctx) { BareState s; memset(&s, 0, sizeof s); return s; }
     int i = bare__tree_push(ctx, box, file, line);
-    return state_of(ctx, i);
+    return bare__state_of(ctx, i);
 }
 
 /* Text is a leaf element sized by its content; its colour comes from the
- * nearest .text_color unless the style sets one (emit.c). */
-static BareState push_text(BareContext *ctx, const char *str, int len, const BareTextStyle *in,
-                           const char *file, int line) {
+ * nearest .text_color unless the style sets one (emit.c). Returns its index. */
+int bare__text_push(BareContext *ctx, const char *str, int len, const BareTextStyle *in, const char *file, int line) {
     BareTextStyle merged;
     bare__style_text(ctx, in, &merged, file, line);
     const BareTextStyle *style = &merged;
@@ -165,16 +177,21 @@ static BareState push_text(BareContext *ctx, const char *str, int len, const Bar
     box.text_color = style->color;
     box.animate = style->animate;
     box.animate_layout = BARE_INSTANT;   /* text glides with its parent, never on its own */
+    box.opacity = style->opacity;
+    box.position = style->position;
+    box.anchor = style->anchor;
+    box.x = style->x;
+    box.y = style->y;
     int i = bare__tree_push(ctx, &box, file, line);
     if (i >= 0) ctx->elems[i].text = bare__text_new(ctx, str, len, style);
-    return state_of(ctx, i);
+    return i;
 }
 
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line) {
     BareContext *ctx = need_frame("bare_text", file, line);
     if (!ctx) { BareState s; memset(&s, 0, sizeof s); return s; }
     if (!text) text = "";
-    return push_text(ctx, text, (int)strlen(text), style, file, line);
+    return bare__state_of(ctx, bare__text_push(ctx, text, (int)strlen(text), style, file, line));
 }
 
 BareState bare_textf_(const char *file, int line, const char *fmt, ...) {
@@ -192,7 +209,7 @@ BareState bare_textf_(const char *file, int line, const char *fmt, ...) {
     va_end(ap2);
     BareTextStyle style;
     memset(&style, 0, sizeof style);
-    return push_text(ctx, buf ? buf : "", buf ? n : 0, &style, file, line);
+    return bare__state_of(ctx, bare__text_push(ctx, buf ? buf : "", buf ? n : 0, &style, file, line));
 }
 
 int bare_open_(const BareBox *box, const char *file, int line) {
@@ -223,5 +240,5 @@ int bare_close_(void) {
 BareState bare_this(void) {
     BareContext *ctx = bare_ctx_current();
     if (!ctx || !ctx->in_frame || ctx->depth < 1) { BareState s; memset(&s, 0, sizeof s); return s; }
-    return state_of(ctx, ctx->stack[ctx->depth - 1]);
+    return bare__state_of(ctx, ctx->stack[ctx->depth - 1]);
 }

@@ -165,6 +165,8 @@ void bare__store_evict(BareContext *ctx, uint64_t frame) {
         table_remove(s, n->id);
         bare__anim_release(ctx, n->anim);   /* exit transitions will hook in here */
         n->anim = 0;
+        bare__edit_release(ctx, n->edit);
+        n->edit = NULL;
         n->id = 0;
         n->next_free = s->free_head;
         s->free_head = i;
@@ -175,6 +177,7 @@ int bare__store_live(const BareContext *ctx) { return ctx->store.used; }
 
 void bare__store_free(BareContext *ctx) {
     BareStore *s = &ctx->store;
+    for (int i = 0; i < s->node_count; i++) bare__edit_release(ctx, s->nodes[i].edit);
     bare__free(&ctx->alloc, s->keys, sizeof *s->keys * (size_t)s->cap);
     bare__free(&ctx->alloc, s->vals, sizeof *s->vals * (size_t)s->cap);
     bare__free(&ctx->alloc, s->nodes, sizeof *s->nodes * (size_t)s->node_cap);

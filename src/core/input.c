@@ -29,7 +29,21 @@ static void release_all(BareContext *ctx) {
     ctx->drag_id = 0;
 }
 
-static void button(BareContext *ctx, int b, bool down, BareVec2 p) {
+/* Double and triple clicks: presses close in time and place (Windows' defaults). */
+#define MULTI_CLICK_TIME 0.5
+#define MULTI_CLICK_DIST 4.0f
+
+static void count_click(BareContext *ctx, BareVec2 p, double t) {
+    float dx = p.x - ctx->press_pos.x, dy = p.y - ctx->press_pos.y;
+    bool again = ctx->click_count > 0 && t - ctx->press_time <= MULTI_CLICK_TIME && t >= ctx->press_time &&
+                 dx * dx + dy * dy <= MULTI_CLICK_DIST * MULTI_CLICK_DIST;
+    ctx->click_count = again ? (ctx->click_count < 3 ? ctx->click_count + 1 : 3) : 1;
+    ctx->press_pos = p;
+    ctx->press_time = t;
+    ctx->press_new = true;
+}
+
+static void button(BareContext *ctx, int b, bool down, BareVec2 p, double t) {
     ctx->mouse = p;
     ctx->mouse_in = true;
     int s = press_slot(b);
@@ -39,6 +53,11 @@ static void button(BareContext *ctx, int b, bool down, BareVec2 p) {
         int i = bare__hit_find(ctx, p);
         if (i >= 0) bare__hit_chain(ctx, i, &ctx->press[s]);
         else ctx->press[s].count = 0;
+        if (s == BARE__PRESS_LEFT) {
+            count_click(ctx, p, t);
+            ctx->press_began = ctx->press[s];
+            bare__focus_press(ctx, i);   /* focus follows the press, as on mousedown */
+        }
         if (i >= 0 && s == BARE__PRESS_LEFT && ctx->hits[i].bar) bare__scroll_press(ctx, i, p);
         return;
     }
@@ -69,7 +88,8 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *e) {
         ctx->mouse_in = false;
         break;
     case BARE_EVENT_MOUSE_BUTTON:
-        button(ctx, e->as.button.button, e->as.button.down, (BareVec2){ e->as.button.x, e->as.button.y });
+        button(ctx, e->as.button.button, e->as.button.down, (BareVec2){ e->as.button.x, e->as.button.y },
+               e->time > 0 ? e->time : ctx->time);
         break;
     case BARE_EVENT_WHEEL:
         bare__scroll_wheel(ctx, e->as.wheel.dx, e->as.wheel.dy, e->as.wheel.precise);   /* scroll.c */
@@ -79,10 +99,16 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *e) {
         if (k <= BARE_KEY_NONE || k >= BARE_KEY_COUNT_) break;
         if (e->as.key.down) ctx->key_pressed[k] = 1;   /* first press and auto-repeats, like keydown */
         ctx->key_down[k] = e->as.key.down;
+        bare__focus_event(ctx, e);                       /* a focused field may take it instead */
         break;
     }
+    case BARE_EVENT_TEXT:
+    case BARE_EVENT_COMPOSITION:
+        bare__focus_event(ctx, e);
+        break;
     case BARE_EVENT_FOCUS:
         /* Keys released while another window had focus never arrive. */
+        ctx->window_focused = e->as.focused;
         if (!e->as.focused) release_all(ctx);
         break;
     default:
@@ -109,6 +135,8 @@ bool bare__input_end(BareContext *ctx) {
     }
     if (top != ctx->hover_top) again = true;
     ctx->mouse_moved = false;
+    ctx->press_new = false;
+    ctx->press_began.count = 0;
     for (int s = 0; s < BARE__PRESS_COUNT; s++) {
         if (ctx->clicked[s].count) again = true;
         ctx->clicked[s].count = 0;
@@ -132,9 +160,16 @@ BareVec2 bare_mouse(void) {
     return ctx ? ctx->mouse : (BareVec2){ 0, 0 };
 }
 
+/* While a field has focus, keys that type don't count as held for the app
+ * (WASD doesn't walk while you write). */
 bool bare_key_down(BareKey key) {
     BareContext *ctx = bare_ctx_current();
-    return ctx && key > BARE_KEY_NONE && key < BARE_KEY_COUNT_ && ctx->key_down[key];
+    if (!ctx) return false;
+    if (key == BARE_KEY_SHORTCUT) return ctx->key_down[ctx->mac_keys ? BARE_KEY_SUPER : BARE_KEY_CTRL];
+    if (key <= BARE_KEY_NONE || key >= BARE_KEY_COUNT_ || !ctx->key_down[key]) return false;
+    if (ctx->focus_id && (ctx->focus_kind & BARE__FOCUS_FIELD) && bare__edit_types(ctx, key, bare__mods(ctx)))
+        return false;
+    return true;
 }
 
 bool bare_key_pressed(BareKey key) {

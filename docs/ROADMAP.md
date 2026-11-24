@@ -228,10 +228,21 @@ non-zero value; hover look on a style applies to elements using it; chained styl
 **Example:** `examples/styles.c`: one settings page in a light and a dark theme, switched by a button.
 **Done when:** the cards example shrinks noticeably by using styles.
 
-## [ ] M7.5: BareType: keyboard focus and text editing (added by the user, for ScreenPlus)
+## [ ] M7.5: BareType: keyboard focus and text editing (added by the user)
 
-**Goal:** text fields that feel native on Windows, macOS and Linux: the biggest gap before ScreenPlus (it has
-`textedit.c`). Before M8 so the widget API is designed with editing and focus in it.
+**Goal:** text fields that feel native on Windows, macOS and Linux. Typing is a core feature of a GUI library, not
+an app's job: no app should have to map undo, redo, word jumps, selection or the clipboard itself, so all of it is
+built in (ScreenPlus's `textedit.c` is one user of it). Before M8 so the widget API is designed with editing and
+focus in it.
+
+**Progress (2026-11-24):** done and tested: focus and Tab order, the focus look, platform text input and IME
+composition, `bare_input` (single-line, multi-line, password, read-only) with every shortcut in the table below,
+the binding table, `bare_edit`, undo / redo, mouse selection, the blinking caret at 0% idle CPU, the text layout
+hooks, `.position = BARE_ABSOLUTE`, and these formatting options: `.underline`, `.strike`, `.letter_spacing`,
+`.max_lines` / `.ellipsis`, `.transform`, `.opacity`. `examples/editor.c` works by injected events.
+Still to do: `bare_editor` / `BareDoc` and `examples/code.c`; `.weight` / `.italic` (font families), text
+`.shadow`, rich text spans; checking a real keyboard, mouse and the Windows Japanese IME by hand (the default font
+has no CJK glyphs, so composed Japanese shows as blanks until a fallback font exists).
 
 - **Focus** (`src/core/focus.c`): click to focus, Tab / Shift+Tab in declaration order, Escape and clicking elsewhere
   blur it; `.focusable`, `BareState.focused`, `bare_focus(id)`; a theme focus-ring look (`.focus`, like `.hover`);
@@ -247,8 +258,54 @@ non-zero value; hover look on a style applies to elements using it; chained styl
   focused field idles at 0% CPU.
 - **Text layout hooks** in `text.c`: point to byte offset and byte offset to caret rect (lines, kerning, wrapping),
   selection rects per line.
-- **Shortcuts per platform:** Ctrl on Windows / Linux, Cmd on macOS (`BARE_KEY_SHORTCUT`), Alt vs Option word jumps,
-  macOS Cmd+arrows for line start / end.
+- **Every standard editing shortcut** (the user's request), built in, no app code. "Mod" is Ctrl on Windows / Linux
+  and Cmd on macOS (`BARE_KEY_SHORTCUT`); adding Shift to any movement extends the selection instead:
+
+  | Keys (Windows / Linux) | macOS | Does |
+  |---|---|---|
+  | ← → | ← → | character (collapses a selection to its edge) |
+  | Ctrl+← → | Option+← → | word start / end |
+  | Home / End | Cmd+← → | line start / end (smart Home: first non-space, then column 0) |
+  | Ctrl+Home / End | Cmd+↑ ↓ | text start / end |
+  | ↑ ↓, PageUp / PageDown | same | line / page (multiline), keeps the caret's column |
+  | Shift + any of the above | same | select (e.g. Ctrl+Shift+→ selects to the next word) |
+  | Ctrl+A | Cmd+A | select all |
+  | Backspace / Delete | same | delete before / after the caret, or the selection |
+  | Ctrl+Backspace / Delete | Option+Backspace / Delete | delete a word |
+  | — | Cmd+Backspace | delete to line start |
+  | Ctrl+X / C / V | Cmd+X / C / V | cut / copy / paste (also Shift+Delete, Ctrl+Insert, Shift+Insert) |
+  | Ctrl+Z | Cmd+Z | undo |
+  | Ctrl+Y, Ctrl+Shift+Z | Cmd+Shift+Z | redo |
+  | Enter | Enter | submit (single-line) / new line (multiline; Shift+Enter always a new line) |
+  | Tab / Shift+Tab | same | next / previous field (multiline: `.tabs = true` inserts a tab instead) |
+  | Escape | Escape | blur (or cancel IME composition first) |
+  | Insert | — | toggle overwrite mode |
+
+  Word boundaries follow the platform (Windows stops at word starts, macOS at word ends for →). The table is data in
+  `edit.c` (`BareKeyBinding`), so an app can add or remap bindings (`bare_edit_bind`), and every action is also
+  callable directly (`bare_edit(id, BARE_EDIT_UNDO)`) for menus and toolbar buttons.
+- **A full editor, not just fields** (the user's request: "very highly capable"): `bare_editor(&doc, ...)` on a
+  `BareDoc` that Bare owns (`bare_doc_create`, `bare_doc_load` / `save`, `bare_doc_text`), for code editors, notes
+  and logs:
+  - **Big documents:** a piece table (O(1) inserts anywhere, cheap undo), a line index, and only visible lines laid
+    out and drawn (the `bare_visible` idea, M6), so a 100 MB / 1M-line file opens instantly and scrolls at full rate.
+  - **Multiple cursors and selections:** Alt+click adds a caret, Ctrl+D (Cmd+D) selects the next match, Alt+drag
+    or Alt+Shift+arrows makes a column (box) selection; every edit applies to all carets, undone as one step.
+  - **Find and replace:** `bare_doc_find` (plain, whole word, match case, regex), all matches highlighted, replace
+    one / all, Ctrl+F / Ctrl+H / F3 / Shift+F3; Ctrl+G go to line.
+  - **Line editing:** Alt+↑ ↓ move lines, Shift+Alt+↑ ↓ duplicate, Ctrl+Shift+K delete line, Ctrl+Enter insert line
+    below, Ctrl+L select line, Tab / Shift+Tab indent / outdent a selection, Ctrl+/ toggle a comment (prefix given
+    by the app), auto-indent and auto-closing brackets and quotes (`.auto_close`), bracket matching.
+  - **Display:** line numbers gutter, current-line highlight, soft wrap on / off, visible whitespace, rulers, tab
+    width, monospace or proportional fonts, a minimap (later), smooth scroll and caret animation (M4 springs).
+  - **Colouring:** `BareHighlighter` callback (line in, coloured spans out, incremental per line with carried
+    state) so apps plug in syntax highlighting; spans also carry underlines (squiggles for errors) and backgrounds.
+  - **Mouse:** drag selected text to move it (Ctrl to copy), middle-click paste on Linux, wheel + Ctrl to zoom.
+  - **Hooks:** change events with ranges (for autocompletion, linting, collaborative editing), decorations and
+    inline widgets (Bare elements placed at a text position: completion popups, hints), read-only ranges.
+  - **Safety:** undo history merged sensibly (typing runs, one step per paste / multi-caret edit), line endings
+    kept (LF / CRLF), invalid UTF-8 shown, not destroyed; autosave hook.
+  - Later: code folding, split views of one doc, collaborative cursors, LSP glue (examples, not core).
 - **Text macros, full formatting** (the user's request): every text call takes the whole set of named options:
   `.size`, `.weight` (font family with weights: regular / medium / semibold / bold), `.italic`, `.underline`,
   `.strike`, `.letter_spacing`, `.line_height`, `.align`, `.nowrap`, `.ellipsis` / `.max_lines`, `.transform`
@@ -267,7 +324,8 @@ redo restore text and caret; click maps to the right offset in wrapped text; dou
 order and blur; keys go to the focused field, not shortcuts underneath; IME composition replaced by the committed
 text; caret blink asks for a wake time, not continuous frames.
 **Example:** `examples/editor.c`: a sign-up form (name, email, password, multi-line bio) and a search field
-filtering a `bare_visible` list, in the theme.
+filtering a `bare_visible` list, in the theme; `examples/code.c`: a code editor opening Bare's own sources
+(C highlighting, line numbers, multi-cursor, find / replace) and a 1M-line generated log.
 **Done when:** the form is usable by keyboard alone; typing, selecting and IME (Windows Japanese IME) work by hand
 on Windows; headless tests pass in CI on Windows, Linux and macOS.
 
@@ -303,20 +361,22 @@ and `text.c` compared between backends.
 Comes from the checklist below. Cheap layout items (align-self, aspect-ratio, absolute) can move earlier if an example
 needs them.
 
-- Layout: `.self` (align-self), `.aspect` (aspect-ratio), `.wrap` (flex-wrap, rows of cards), `.margin`, absolute
-  positioning with insets (`.position = BARE_ABSOLUTE`, `.inset`).
+- Layout: `.self` (align-self), `.aspect` (aspect-ratio), `.wrap` (flex-wrap, rows of cards), `.margin`; absolute
+  positioning came early in M7.5 (`.position = BARE_ABSOLUTE`, `.anchor`, `.x`, `.y`); CSS-style insets on all four
+  sides (`.inset`, stretching between them) remain.
 - Looks: per-corner radii (`.radii`; the draw command already has four), per-side border widths and colours, outline +
   outline offset, linear / radial / conic gradients (`.gradient`), several shadows and inset shadows, dashed borders.
 - Transforms: `.rotate`, `.origin` (transform-origin); skew and 3D perspective later.
 - Filters: blur, brightness, contrast, saturate, grayscale on an element (`.filter`), blend modes.
-- Text extras (after M5): letter spacing, underline/strike, text shadow, ellipsis on overflow, weight/italic.
+- Text extras: letter spacing, underline / strike and ellipsis came in M7.5; text shadow and weight / italic are
+  scheduled there too.
 
 ---
 
 ## Web parity checklist (HTML + CSS + JS → Bare)
 
 Bare replaces the web stack for native UI, so every common thing the web can do needs an answer. Honest status,
-2026-11-23. **done** = works today; **Mx** = scheduled in that milestone; **C** = plain C already does it, no API
+2026-11-24. **done** = works today; **Mx** = scheduled in that milestone; **C** = plain C already does it, no API
 needed; **beyond** = something the web can't do as easily.
 
 | Web | Bare | Status |
@@ -328,7 +388,7 @@ needed; **beyond** = something the web can't do as easily.
 | `width/height` px, %, `fit-content` | `300`, `BARE_PERCENT(50)`, `BARE_FIT` | done |
 | `min-/max-width/height` | `.min_width` ... | done |
 | `align-items`, `justify-content` (all 6) | `.align`, `.justify` | done |
-| `position: absolute`, overlapping layers | `bare_stack` + `.offset` today; insets in M10 | partial |
+| `position: absolute`, overlapping layers | `.position = BARE_ABSOLUTE` + `.anchor`, `.x`, `.y`; `bare_stack`; four-side insets in M10 | done |
 | `z-index` | later siblings draw on top; floating layers later | partial |
 | `align-self`, `aspect-ratio`, `flex-wrap`, `margin` | `.self`, `.aspect`, `.wrap`, `.margin` | M10 |
 | `display: grid` | grid layout | later |
@@ -365,9 +425,12 @@ needed; **beyond** = something the web can't do as easily.
 | **Text** | | |
 | text, wrapping, size, colour (inherited), line-height, align, nowrap | `bare_text("...", .size = 20)`, `.text_color` | done |
 | `@font-face` | `bare_font_load("x.ttf")`, `bare_font_from_memory` | done |
-| letter-spacing, decoration, text-shadow, ellipsis | | M10 |
+| letter-spacing, underline / line-through, text-transform, ellipsis, line-clamp | `.letter_spacing`, `.underline`, `.strike`, `.transform`, `.ellipsis`, `.max_lines` | done |
+| font-weight, italic, text-shadow, inline spans | `.weight`, `.italic`, `.shadow`, `bare_paragraph` / `bare_span` | M7.5 |
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
-| `<input>`, `<textarea>`, selection, focus / Tab | `bare_input(buf, cap, ...)`, `.focusable` (BareType) | M7.5 |
+| `<input>`, `<textarea>`, password, placeholder, selection, focus / Tab, `:focus` | `bare_input(buf, cap, ...)`, `.focusable`, `.focus = {...}`, `bare_focus` | done |
+| every editing shortcut, undo / redo, IME composition | built in; remappable with `bare_edit_bind`, callable with `bare_edit` | done, beyond |
+| `contenteditable` code editors (CodeMirror, Monaco) | `bare_editor` on a `BareDoc` | M7.5 |
 | **Interaction (the JS part)** | | |
 | `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks, animated by `.animate` | done |
 | `onclick`, `oncontextmenu`, hover | `if (bare_box(...).clicked)`: the return value; clicks bubble | done |
@@ -378,7 +441,7 @@ needed; **beyond** = something the web can't do as easily.
 | state, `useState`, re-render | your C variables; every frame redraws from them | C |
 | CSS classes, variables, themes | `.style = &card` (chains), `bare_theme()`, `bare_set_theme` (animated) | done |
 | buttons, checkboxes, sliders | `bare_button` ... | M8 |
-| focus, tab order, drag and drop, touch, IME | | later |
+| drag and drop, touch | | later |
 | accessibility (screen readers) | platform a11y trees | later |
 | runs in a browser | sokol backend + Emscripten | M9 |
 | **Cost** | | |

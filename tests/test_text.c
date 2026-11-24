@@ -546,6 +546,109 @@ TEST(image_load_decodes_png) {
     CHECK(log_count == 1 && strstr(last_log, "missing.png"));
 }
 
+/* ---- formatting options --------------------------------------------------------- */
+
+static BareText *wrap_style(const char *s, float width, BareTextStyle st) {
+    st.font = fake;
+    st.size = 10;
+    BareText *t = bare__text_new(ctx, s, (int)strlen(s), &st);
+    bare__text_wrap(ctx, t, width);
+    return t;
+}
+
+TEST(transform_changes_case_keeping_byte_offsets) {
+    fresh(false);
+    begin(1);
+    /* sharp s (c3 9f) has no one-letter capital; the division sign (c3 b7) isn't a letter */
+    BareText *t = wrap_style("Stra\xc3\x9f" "e \xc3\xa9t\xc3\xa9 \xc3\xb7", 400,
+                             (BareTextStyle){ .transform = BARE_UPPERCASE });
+    CHECK(strcmp(t->str, "STRA\xc3\x9f" "E \xc3\x89T\xc3\x89 \xc3\xb7") == 0);
+    t = wrap_style("\xc3\x89T\xc3\x89 OK \xc3\x97", 400, (BareTextStyle){ .transform = BARE_LOWERCASE });
+    CHECK(strcmp(t->str, "\xc3\xa9t\xc3\xa9 ok \xc3\x97") == 0);
+    bare_ctx_end(ctx, NULL);
+}
+
+TEST(letter_spacing_widens_every_character) {
+    fresh(false);
+    begin(1);
+    BareText *t = wrap_style("abc", 400, (BareTextStyle){ .letter_spacing = 2 });
+    CHECK_NEAR(t->max_line, 21, 1e-4);   /* (5 + 2) x 3, after the last one too, as in CSS */
+    CHECK_NEAR(t->lines[0].width, 21, 1e-4);
+    t = wrap_style("abcd", 400, (BareTextStyle){ .letter_spacing = -1 });
+    CHECK_NEAR(t->max_line, 16, 1e-4);
+    bare_ctx_end(ctx, NULL);
+}
+
+TEST(max_lines_cuts_and_ellipsis_ends_the_last_line) {
+    fresh(false);
+    begin(1);
+    BareText *t = wrap_style("aaa bbb ccc ddd", 35, (BareTextStyle){ .max_lines = 1 });
+    CHECK(t->line_count == 1 && line_is(t, 0, "aaa bbb") && !t->lines[0].cut);
+    t = wrap_style("aaa bbb ccc ddd", 35, (BareTextStyle){ .max_lines = 1, .ellipsis = true });
+    CHECK(t->line_count == 1 && line_is(t, 0, "aaa bb") && t->lines[0].cut);
+    CHECK_NEAR(t->lines[0].width, 35, 1e-4);   /* 30 + the ellipsis */
+    CHECK_NEAR(bare__text_height(t), 13, 1e-4);
+    t = wrap_style("aaa bbb", 35, (BareTextStyle){ .max_lines = 2, .ellipsis = true });
+    CHECK(t->line_count == 1 && !t->lines[0].cut);   /* nothing was cut: no ellipsis */
+    t = wrap_style("aaa bbb ccc", 37, (BareTextStyle){ .max_lines = 1, .ellipsis = true });
+    CHECK(line_is(t, 0, "aaa bbb") || line_is(t, 0, "aaa bb"));
+    CHECK(t->lines[0].width <= 37 + 1e-4);
+    bare_ctx_end(ctx, NULL);
+}
+
+TEST(nowrap_ellipsis_cuts_at_the_width_and_can_be_squeezed) {
+    fresh(false);
+    begin(1);
+    BareText *t = wrap_style("hello world", 30, (BareTextStyle){ .nowrap = true, .ellipsis = true });
+    CHECK(t->line_count == 1 && line_is(t, 0, "hello") && t->lines[0].cut);   /* no space before the dots */
+    t = wrap_style("hello", 30, (BareTextStyle){ .nowrap = true, .ellipsis = true });
+    CHECK(!t->lines[0].cut);
+    bare_ctx_end(ctx, NULL);
+
+    begin(1);
+    bare_row(.width = 40) {
+        bare_text("hello world", .font = fake, .size = 10, .nowrap = true, .ellipsis = true);
+    }
+    bare_ctx_end(ctx, NULL);
+    const BareElem *e = find_text(0);
+    CHECK_NEAR(e->rect.w, 40, 1e-4);   /* shrank to the row instead of overflowing it */
+    CHECK(line_is(e->text, 0, "hello w") && e->text->lines[0].cut);
+}
+
+TEST(emit_draws_the_ellipsis_and_lines) {
+    fresh(false);
+    begin(1);
+    bare_column(.width = 30) {
+        bare_text("hello world", .font = fake, .size = 10, .nowrap = true, .ellipsis = true);
+    }
+    const BareDrawList *l = bare_ctx_end(ctx, NULL);
+    CHECK(l->cmd_count == 1 && l->cmds[0].as.text.count == 6);   /* hello + the ellipsis glyph */
+    CHECK_NEAR(l->cmds[0].as.text.glyphs[5].dst.x, 25, 1e-4);
+
+    begin(1);
+    bare_text("ab", .font = fake, .size = 10, .underline = true, .strike = true);
+    l = bare_ctx_end(ctx, NULL);
+    CHECK(l->cmd_count == 3 && l->cmds[1].kind == BARE_CMD_RECT && l->cmds[2].kind == BARE_CMD_RECT);
+    /* line 13 tall: half-leading 1.5, baseline 9.5; bars a pixel thick, on whole pixels */
+    const BareRect u = l->cmds[1].as.rect.rect, k = l->cmds[2].as.rect.rect;
+    CHECK_NEAR(u.x, 0, 1e-4); CHECK_NEAR(u.w, 10, 1e-4); CHECK_NEAR(u.y, 10, 1e-4); CHECK_NEAR(u.h, 1, 1e-4);
+    CHECK_NEAR(k.y, 6, 1e-4); CHECK_NEAR(k.h, 1, 1e-4);
+}
+
+TEST(text_opacity_and_absolute_position) {
+    fresh(false);
+    begin(1);
+    bare_row(.width = 200, .height = 100) {
+        bare_text("ab", .font = fake, .size = 10, .opacity = 0.5f, .position = BARE_ABSOLUTE,
+                  .anchor = BARE_BOTTOM_RIGHT, .x = -4, .y = -2);
+    }
+    bare_ctx_end(ctx, NULL);
+    const BareElem *e = find_text(0);
+    CHECK_NEAR(e->rect.x, 200 - 10 - 4, 1e-4);
+    CHECK_NEAR(e->rect.y, 100 - 13 - 2, 1e-4);
+    CHECK_NEAR(e->opacity, 0.5f, 1e-4);
+}
+
 int main(void) {
     RUN(utf8_valid_sequences);
     RUN(utf8_invalid_bytes_become_replacement_characters);
@@ -576,6 +679,12 @@ int main(void) {
     RUN(bad_font_data_falls_back);
     RUN(text_state_and_hits);
     RUN(image_load_decodes_png);
+    RUN(transform_changes_case_keeping_byte_offsets);
+    RUN(letter_spacing_widens_every_character);
+    RUN(max_lines_cuts_and_ellipsis_ends_the_last_line);
+    RUN(nowrap_ellipsis_cuts_at_the_width_and_can_be_squeezed);
+    RUN(emit_draws_the_ellipsis_and_lines);
+    RUN(text_opacity_and_absolute_position);
     if (ctx) bare_ctx_destroy(ctx);
     return test_report();
 }

@@ -18,8 +18,13 @@ static struct {
     float         width, height, scale;
     double        start, time, prev_time;
     int           capture_frames;     /* BARE_CAPTURE: frames left before quitting */
+    BareTextInputKind text_input;     /* what the platform was last told */
+    BareRect      text_rect;
     BareEvent     events[MAX_EVENTS];
 } app;
+
+static const char *clip_get(void *user) { (void)user; return app.platform.clipboard_get(app.platform.self); }
+static void clip_set(void *user, const char *text) { (void)user; app.platform.clipboard_set(app.platform.self, text); }
 
 bool bare_window(int width, int height, const char *title) {
     if (app.open) return true;
@@ -37,6 +42,7 @@ bool bare_window(int width, int height, const char *title) {
         return false;
     }
     bare_ctx_make_current(app.ctx);
+    bare_ctx_set_clipboard(app.ctx, clip_get, clip_set, NULL);
     app.platform.window_size(app.platform.self, &app.width, &app.height, &app.scale);
     app.start = app.prev_time = app.platform.time(app.platform.self);
     const char *capture = getenv("BARE_CAPTURE");
@@ -68,6 +74,16 @@ static void end_frame(void) {
     const BareDrawList *list = bare_ctx_end(app.ctx, &animating);
     app.renderer.render(app.renderer.self, list);
     app.platform.set_cursor(app.platform.self, bare_ctx_cursor(app.ctx));   /* no-op when unchanged */
+    /* Text input on while a field has focus, the IME window following the caret. */
+    BareRect caret;
+    BareTextInputKind ti = bare_ctx_text_input(app.ctx, &caret);
+    bool moved = caret.x != app.text_rect.x || caret.y != app.text_rect.y || caret.h != app.text_rect.h;
+    if (ti != app.text_input || (ti && moved)) {
+        if (ti && app.platform.start_text_input) app.platform.start_text_input(app.platform.self, ti, caret);
+        else if (!ti && app.platform.stop_text_input) app.platform.stop_text_input(app.platform.self);
+        app.text_input = ti;
+        app.text_rect = caret;
+    }
     if (!app.shown) {
         app.platform.show_window(app.platform.self);   /* no blank flash before the first frame */
         app.shown = true;

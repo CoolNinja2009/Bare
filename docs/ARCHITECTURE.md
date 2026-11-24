@@ -44,6 +44,10 @@ src/
     anim.c             animation channels per node, retargeting, idle detection
     input.c            event queue -> mouse/keys state, press/click/scroll bookkeeping
     hit.c              hit list and hit testing (clip + paint order)
+    focus.c            keyboard focus, Tab order, the ordered key / text queue, clipboard hooks
+    edit.c, edit.h     the editing engine: actions, the binding table, words, undo / redo
+    field.c            bare_input: the field box, mouse selection, caret blink, IME composition
+    caret.c            positions in wrapped text: offset <-> caret rect, hit testing, selection rects
     scroll.c           scroll boxes: wheel routing and hand-off, the offset spring, scrollbars, bare_visible
     text.c             UTF-8, line breaking, glyph cache and atlas (font backend below)
     font_stb.c         stb_truetype implementation of the font backend
@@ -222,6 +226,11 @@ Text is shaped when it's declared (`bare__text_new`), so pass 1 knows its unwrap
 run; pass 3 wraps it at its final width. Shaping goes through the context's font backend (§13), so layout tests use a
 fake monospace backend and never need a real font.
 
+**Absolute children** (`.position = BARE_ABSOLUTE`) are linked to their parent but kept out of its sibling chain
+(like scrollbar rails), so they take no room and don't count for gaps. Passes 2/5 size them from the parent's box
+inside its border (fixed, percent of it, `BARE_GROW` fills it, content gets fit-content); pass 6 places them at
+`.anchor` (one of nine points, the same point of parent and child) plus `.x`, `.y`. They paint in declaration order.
+
 A content-sized (`BARE_FIT`) child across its parent's main axis, or in a stack, gets CSS's fit-content:
 `min(preferred, max(min-content, available))`. That is what makes a paragraph in a column wrap at the column's width
 instead of overflowing it.
@@ -362,6 +371,45 @@ time per frame (vs ~8.5 ms declaring them all).
 
 **Z-order.** Paint order is declaration order. Floating layers (popups, tooltips drawn above everything) are deferred,
 and will be a `.layer` field that sorts the hit list and the draw list.
+
+### Keyboard focus and text editing (`focus.c`, `edit.c`, `field.c`, `caret.c`)
+
+Typing is built in: an app passes a buffer to `bare_input` and never maps a key itself.
+
+**Focus.** One id has focus (`focus_id`). A press focuses the innermost `.focusable` element in the pressed chain
+(scrollbars excepted) or clears focus; `bare_focus(id)` sets it. Tab / Shift+Tab walk the focusable entries of last
+frame's hit list, which is in pre-order, i.e. declaration order, and scroll the new one into view. Escape blurs.
+Each focusable element reports itself while declared; a focus whose element wasn't declared is dropped at frame end.
+`.focus` is a look like `.hover`, applied between hover and press.
+
+**The key queue.** Keys, text (`BARE_EVENT_TEXT`), IME composition and `bare_edit` actions go into one ordered
+queue, so "type, Ctrl+Z, type" replays in order. When a field has focus it takes the queue (`in_take` entries) while
+it's declared; `bare_key_pressed` no longer sees keys the field used, so shortcuts underneath don't fire. A Tab in
+the middle splits the queue: the rest goes to the next field next frame. With no field focused only plain keys stay.
+
+**Bindings.** `edit.c` has the default shortcut table as data (`BareKeyBinding`: key, modifiers, action), tagged for
+all platforms, PC or macOS; `BARE_MOD_SHORTCUT` is Ctrl or Cmd. Lookup tries an exact match, then Shift + a
+movement action extends the selection. `bare_edit_bind` adds or replaces entries; `bare_ctx_set_mac_keys` switches
+the table (tests run both).
+
+**The engine** works on the app's buffer in place, byte offsets on code point boundaries: caret, anchor, a goal
+column for up / down, and affinity (`upstream`) for the two caret positions at a soft wrap. Every change goes through
+one `replace()`, which records undo: records live in a byte pool, typing / Backspace / Delete runs merge until a word
+starts, at most 1000 records (the oldest half dropped). Paste turns CRLF into LF, and line breaks into spaces in a
+single-line field; `cap` is respected without splitting a code point.
+
+**The field** (`field.c`) is a box (`theme.input` look, focusable, scrolling sideways or down without scrollbars)
+holding one text element. Its state (`BareEditState`) is allocated on first focus and lives on the node. Password
+fields lay out bullets and map offsets between shown and real text; the IME composition is spliced into the shown
+text and underlined. Layout is cached by a generation counter. After layout, the focused field scrolls instantly to
+keep the caret in view and tells the platform where the caret is (`bare_ctx_text_input`: kind + rect, used for
+`SDL_StartTextInput` and the IME window). Emit draws selection rects under the glyphs and the caret over them.
+The caret blinks 0.53 s on / off by wake times, not continuous frames, and stops blinking after 10 s idle, so a
+focused field costs nothing.
+
+**Text geometry** (`caret.c`) is shared by every text element: offset to caret rect (half-leading, ascent +
+descent tall), point to offset, line of an offset, selection rects per line. Clicks, drags (by character, word on
+double click, line on triple click) and arrows all use it.
 
 ## 9. Draw commands (`emit.c`)
 
@@ -596,6 +644,11 @@ typedef struct BareFontBackend {
 - **Line breaking** (greedy): at spaces, which hang off the line's end and are skipped at the next line's start; after
   hyphens; inside a word only when no break fits. `
 ` forces a break. Full UAX #14 comes with HarfBuzz.
+- **Formatting**: `.transform` changes the copied string's case (ASCII and Latin-1, same byte length, so offsets
+  hold); `.letter_spacing` is added to every advance after shaping, so carets agree; `.max_lines` drops lines after
+  wrapping, and `.ellipsis` cuts the last kept line (or, with `.nowrap`, any line wider than the box) and marks it
+  to end in "…" (shaped once; "..." if the font lacks it). A `.nowrap` + `.ellipsis` text can shrink to the ellipsis.
+  `.underline` / `.strike` are rect commands after the glyphs, on whole pixels, in the text's colour.
 - **Glyph cache**: open addressing keyed by (font, glyph, physical size in 1/64 px, sub-pixel phase). Still text is
   snapped to whole physical pixels with one of three horizontal sub-pixel phases, so it's sharp without uneven
   spacing; moving or scaled text (`.scale` animations stretch existing glyphs) is placed unsnapped at phase 0.

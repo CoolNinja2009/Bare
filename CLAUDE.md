@@ -143,13 +143,15 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 ## Current status
 
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
-(animation), M5 (text and images), M6 (clipping and scrolling) and M7 (style system) done.** Next: M7.5 (BareType:
-focus and text editing, before M8 so widgets are designed with it); the optimizations below can be interleaved.
+(animation), M5 (text and images), M6 (clipping and scrolling) and M7 (style system) done; M7.5 (BareType) in
+progress: focus, fields, every shortcut, absolute positioning and most text formatting are done.** Next in M7.5:
+`bare_editor` / `BareDoc` + `examples/code.c`, `.weight` / `.italic` / text `.shadow` / rich text spans, and the
+hand checks below. The optimizations below can be interleaved.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
   Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-  `scroll.c`, `styles.c`, `glass_motion/`, `fluid/`. 10 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  `scroll.c`, `styles.c`, `editor.c`, `glass_motion/`, `fluid/`. 11 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -217,7 +219,28 @@ focus and text editing, before M8 so widgets are designed with it); the optimiza
   and light, copied into the context (`&bare_theme()->card` is stable), theme styles fade on `bare_set_theme`; the
   theme gives the clear colour (unless `bare_background`) and root text colour. `styles.c` (settings page, theme
   button) checked by captures in both themes and mid-fade; `cards.c` rewritten with styles and real text.
+- Focus and text editing (M7.5, `src/core/focus.c`, `edit.c` + `edit.h`, `field.c`, `caret.c`): typing is built
+  in, apps map nothing (the user's point: a GUI library must do undo, redo and every shortcut itself).
+  `.focusable`, `.focus` look, `bare_focus` / `bare_focused`, Tab / Shift+Tab in declaration order (from the hit
+  list), Escape blurs; one ordered queue of keys, text, IME composition and `bare_edit` actions, taken by the
+  focused field (a Tab mid-queue hands the rest to the next field). `bare_input(buf, cap, ...)`: single-line,
+  `.multiline`, `.password` (dots), `.read_only`, `.tabs`, `.placeholder`, theme `input` style with a focus glow;
+  returns `.focused` / `.changed` / `.submitted`. Every shortcut in the roadmap table, PC and macOS variants, as a
+  data table (`bare_edit_bind` remaps, `bare_ctx_set_mac_keys` switches); undo / redo with merged typing runs;
+  click / drag / double / triple click; overwrite mode; smart Home; paste normalises line breaks; cap never splits
+  a code point. Caret blinks by wake times and stops after 10 s: idle CPU stays 0. SDL3: `SDL_EVENT_TEXT_INPUT` /
+  `TEXT_EDITING`, `SDL_StartTextInputWithProperties`, `SDL_SetTextInputArea` at the caret, the IME composition
+  drawn inline. `examples/editor.c` (sign-up form + search over 5,000 rows) checked by injected events and
+  captures; D3D12 = Vulkan. 31 tests in `tests/test_edit.c`.
+- Absolute positioning (M7.5): `.position = BARE_ABSOLUTE` + `.anchor` (9 points) + `.x` / `.y`, on boxes and
+  text; out of the sibling chain like scrollbar rails, sized from the parent inside its border. Text formatting:
+  `.underline`, `.strike`, `.letter_spacing`, `.max_lines` + `.ellipsis` (also `.nowrap` + `.ellipsis`, which
+  lets text shrink), `.transform` (ASCII + Latin-1 case), `.opacity`. `text.c` example shows them and a "NEW"
+  badge (capture checked).
 - Stand-ins: `layout.c` and `buttons.c` still use grey bars where labels would go.
+- Not verified by hand (M7.5): a real keyboard and mouse in `editor.c` (everything was driven by injected SDL
+  events), the Windows Japanese IME (composition draws, but Inter has no CJK glyphs: composed text shows blank
+  until there's a fallback font), macOS keys on a Mac (unit-tested only).
 - Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
   and the motion was checked in captures); DPI scale above 100%, including text sharpness at 150%/200% (this display
   is 100%; the core's 1.5x/2x maths and glyph sizes are unit-tested); live window resizing on Windows (SDL's modal

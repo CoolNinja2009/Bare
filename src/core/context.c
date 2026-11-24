@@ -43,6 +43,10 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
     ctx->wake_at = -1;
+    ctx->window_focused = true;
+#ifdef __APPLE__
+    ctx->mac_keys = true;
+#endif
     return ctx;
 }
 
@@ -53,6 +57,7 @@ void bare_ctx_destroy(BareContext *ctx) {
     bare__store_free(ctx);
     bare__anim_free(ctx);
     bare__text_free(ctx);
+    bare__focus_free(ctx);
     bare__free(&ctx->alloc, ctx->elems, (size_t)ctx->elem_cap * sizeof *ctx->elems);
     bare__free(&ctx->alloc, ctx->cmds, (size_t)ctx->cmd_cap * sizeof *ctx->cmds);
     bare__free(&ctx->alloc, ctx->hits, (size_t)ctx->hit_cap * sizeof *ctx->hits);
@@ -87,6 +92,7 @@ void bare_ctx_begin(BareContext *ctx, float width, float height, float scale, do
     ctx->in_frame = true;
     bare__scroll_begin(ctx);  /* this frame's scroll offsets, before anyone reads them */
     bare__input_begin(ctx);   /* before any element asks whether it's hovered */
+    bare__focus_begin(ctx);   /* Tab and Escape; what the focused field gets this frame */
     bare__tree_begin(ctx);
 }
 
@@ -98,6 +104,7 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
     }
     bare__tree_end(ctx);
     bare__layout(ctx);        /* targets */
+    bare__fields_layout(ctx); /* the focused field scrolls to its caret */
     bare__animate(ctx);       /* what's drawn this frame */
     bare__transforms(ctx);
     bare__emit(ctx);
@@ -112,6 +119,8 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
         if (e->node >= 0) ctx->store.nodes[e->node].rect = bare__visual_rect(e);
     }
     bool more = bare__input_end(ctx) || ctx->anim_active || ctx->text_redraw || ctx->scroll_active;
+    bare__focus_end(ctx);
+    if (ctx->in_count > 0) more = true;   /* keys after a Tab go to the next field, next frame */
     ctx->text_redraw = false;
     if (more && still_animating) *still_animating = true;
     bare__store_evict(ctx, ctx->frame_index);

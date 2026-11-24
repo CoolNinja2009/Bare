@@ -184,7 +184,9 @@ typedef enum BareEventKind {
     BARE_EVENT_RESIZE,         /* size or DPI scale changed */
     BARE_EVENT_EXPOSE,         /* the window needs redrawing */
     BARE_EVENT_FOCUS,
-    BARE_EVENT_QUIT
+    BARE_EVENT_QUIT,
+    BARE_EVENT_TEXT,           /* typed text (UTF-8), after the layout, dead keys and IME did their work */
+    BARE_EVENT_COMPOSITION     /* the IME's text being composed (empty: composition over); replaces the last one */
 } BareEventKind;
 
 enum { BARE_MOUSE_LEFT = 1, BARE_MOUSE_MIDDLE = 2, BARE_MOUSE_RIGHT = 3 };
@@ -199,7 +201,10 @@ typedef struct BareEvent {
         struct { float x, y; } mouse;                       /* logical pixels */
         struct { int button; bool down; float x, y; } button;
         struct { float dx, dy; bool precise; } wheel;       /* + = right / up; precise = pixels (touchpads), else notches */
-        struct { int key; bool down, repeat; int mods; } key;   /* key: a BareKey */
+        struct { int key; bool down, repeat; int mods; } key;   /* key: a BareKey; mods: BARE_MOD_* bits */
+        /* TEXT and COMPOSITION. The bytes only need to live until bare_ctx_event
+         * returns. cursor: byte offset of the IME's cursor in the composition. */
+        struct { const char *utf8; int len; int cursor; } text;
         struct { float w, h, scale; } size;
         bool focused;
     } as;
@@ -274,6 +279,23 @@ BareCursor bare_ctx_cursor(const BareContext *ctx);
 double bare_ctx_wake_time(const BareContext *ctx);
 
 void bare_ctx_set_clear(BareContext *ctx, BareColor color);
+
+/* Text input: whether a text field has focus (the platform should deliver
+ * TEXT and COMPOSITION events and show an IME there), what kind it is, and the
+ * caret's rect in logical window pixels (where the IME's candidate window
+ * goes). Valid after bare_ctx_end. */
+typedef enum BareTextInputKind { BARE_TEXT_INPUT_NONE = 0, BARE_TEXT_INPUT_LINE, BARE_TEXT_INPUT_MULTILINE,
+                                 BARE_TEXT_INPUT_PASSWORD } BareTextInputKind;
+BareTextInputKind bare_ctx_text_input(const BareContext *ctx, BareRect *caret);
+
+/* The clipboard text fields use. Without one (headless) the context keeps
+ * its own. get returns a string valid until the next call. */
+void bare_ctx_set_clipboard(BareContext *ctx, const char *(*get)(void *user), void (*set)(void *user, const char *text),
+                            void *user);
+
+/* Editing keys follow macOS (Cmd shortcuts, Option word jumps) or Windows /
+ * Linux; the default is the platform built for. Tests switch it. */
+void bare_ctx_set_mac_keys(BareContext *ctx, bool mac);
 
 /* Logs from the core (user mistakes, warnings). Default: stderr. */
 typedef void (*BareLogFn)(void *user, const char *message);

@@ -33,6 +33,11 @@ typedef struct BarePlatform {
     void   (*set_title)(void *self, const char *title);
     const char *(*clipboard_get)(void *self);
     void   (*clipboard_set)(void *self, const char *text);
+    /* Text fields: deliver TEXT and COMPOSITION events while on; `caret` is in
+     * logical window pixels (the IME's window goes under it). Called again
+     * when the caret moves. */
+    void   (*start_text_input)(void *self, BareTextInputKind kind, BareRect caret);
+    void   (*stop_text_input)(void *self);
     void  *(*native)(void *self, BareNativeKind what);
     /* Platforms that own the main loop set this; others leave it NULL. */
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);

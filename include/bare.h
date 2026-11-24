@@ -139,6 +139,24 @@ typedef enum BareAlign {
     BARE_SPACE_EVENLY
 } BareAlign;
 
+/* .position = BARE_ABSOLUTE takes an element out of its parent's flex flow
+ * (CSS position: absolute): it doesn't take up room or move its siblings, and
+ * is placed on its parent instead, at .anchor (which point of the parent and
+ * of the element meet; default the top left) moved by .x, .y (pixels, right
+ * and down). Its size works as usual (BARE_GROW fills the parent, a percent is
+ * of the parent). It's drawn in the order declared, so declare it last to put
+ * it on top: a badge on a button, a label over a canvas, a popup. */
+typedef enum BarePosition {
+    BARE_POSITION_FLOW = 0,   /* default: laid out by the parent */
+    BARE_ABSOLUTE
+} BarePosition;
+
+typedef enum BareAnchor {
+    BARE_TOP_LEFT = 0, BARE_TOP, BARE_TOP_RIGHT,
+    BARE_LEFT, BARE_MIDDLE, BARE_RIGHT,
+    BARE_BOTTOM_LEFT, BARE_BOTTOM, BARE_BOTTOM_RIGHT
+} BareAnchor;
+
 /* .scroll: which way a box scrolls content that overflows it (CSS overflow:
  * auto). The wheel scrolls the innermost scroll box under the mouse that can
  * still move that way (Shift turns the wheel sideways); a mouse wheel glides,
@@ -350,6 +368,9 @@ typedef struct BareBox {
     float min_width, max_width, min_height, max_height;   /* 0 = no limit */
     float grow;                 /* share of free space for BARE_GROW (0 = default 1) */
     float shrink;               /* share of overflow taken back (0 = default 1; fixed sizes never shrink) */
+    BarePosition position;      /* BARE_ABSOLUTE: placed on the parent by .anchor, .x, .y, out of the flow */
+    BareAnchor anchor;
+    float x, y;
 
     /* children */
     BareDirection dir;          /* set by bare_row / bare_column */
@@ -375,7 +396,9 @@ typedef struct BareBox {
 
     /* interaction */
     BareLook hover, press;      /* looks while hovered / pressed */
+    BareLook focus;             /* look while it has keyboard focus (a focus ring: .focus = {.border_color = ...}) */
     BareCursor cursor;
+    bool focusable;             /* takes keyboard focus: a click or Tab / Shift+Tab moves it here (see bare_focus) */
     bool passthrough;           /* the mouse goes through it (CSS pointer-events: none); children still get it */
     bool clip;                  /* clip children to the box, inside its border (CSS overflow: hidden) */
     BareScroll scroll;          /* scroll overflowing children (see BareScroll); implies .clip */
@@ -384,6 +407,8 @@ typedef struct BareBox {
     BareAnim animate;           /* how every animatable property moves to its new value (default: instantly) */
     BareAnim animate_layout;    /* overrides .animate for position and size */
 } BareBox;
+
+typedef enum BareTransform { BARE_TRANSFORM_NONE = 0, BARE_UPPERCASE, BARE_LOWERCASE } BareTransform;
 
 typedef struct BareTextStyle {
     BareId id;
@@ -394,6 +419,15 @@ typedef struct BareTextStyle {
     float line_height;          /* multiple of size; 0 = default 1.3 */
     BareAlign align;            /* BARE_START / CENTER / END within the line box */
     bool nowrap;                /* default: wraps at spaces and after hyphens to fit its width */
+    int max_lines;              /* cut after this many lines (0 = no limit) */
+    bool ellipsis;              /* end cut text with "…" (with .max_lines, or .nowrap text narrower than itself) */
+    bool underline, strike;     /* lines under / through the text, in its colour */
+    float letter_spacing;       /* extra pixels after every character (may be negative) */
+    BareTransform transform;    /* BARE_UPPERCASE / BARE_LOWERCASE (Latin) */
+    float opacity;              /* 0 = default 1 */
+    BarePosition position;      /* BARE_ABSOLUTE: see BareBox */
+    BareAnchor anchor;
+    float x, y;
     BareAnim animate;           /* how its colour changes (default: instantly; inherited colour follows the parent) */
 } BareTextStyle;
 
@@ -404,6 +438,9 @@ typedef struct BareState {
     bool pressed;               /* a press started on it and the button is still down */
     bool clicked;               /* pressed and released over it (this frame) */
     bool right_clicked;
+    bool focused;               /* it has keyboard focus */
+    bool changed;               /* bare_input: the text was edited this frame */
+    bool submitted;             /* bare_input: Enter in a single-line field (this frame) */
     BareRect rect;              /* where it was last frame, logical pixels */
     BareVec2 scroll;            /* scroll boxes: how far the content is scrolled this frame */
 } BareState;
@@ -441,6 +478,85 @@ BareState bare_this(void);
     for (int i = bare_visible_((count), (float)(size), __FILE__, __LINE__); bare_visible_more_(i); i++)
 
 /* ------------------------------------------------------------------------ */
+/* Keyboard focus and text fields                                           */
+/* ------------------------------------------------------------------------ */
+
+/* A text field editing your buffer in place (`cap` bytes, the NUL included).
+ * Everything a native field does is built in: typing (any layout, dead keys,
+ * IME), the caret and selection by keyboard and mouse (double-click a word,
+ * triple-click a line), every standard shortcut (word jumps, Home / End,
+ * select all, cut / copy / paste, undo / redo, ...: see BareEditAction),
+ * scrolling to the caret and a blinking caret that costs nothing when idle.
+ *
+ *     static char name[64];
+ *     BareState s = bare_input(name, sizeof name, .placeholder = "Your name", .width = 280);
+ *     if (s.submitted) save(name);      // Enter
+ *
+ * It looks like the theme's .input style; pass .style for your own (its
+ * .focus look is the focus ring). The field's id defaults to its call site;
+ * give fields in loops BARE_IDI. Your buffer stays the truth: change it any
+ * time and the field follows (the caret goes to the end, undo starts over). */
+typedef struct BareInput {
+    BareId id;
+    const BareBox *style;           /* the box (default: the theme's .input) */
+    const BareTextStyle *text_style;/* its text (default: the theme's .body) */
+    float width, height;            /* 0 = the style's; multi-line height defaults to .lines lines */
+    int lines;                      /* multiline: visible lines when .height isn't set (0 = default 4) */
+    const char *placeholder;        /* shown while empty */
+    bool multiline;                 /* Enter adds a line (Shift+Enter always does); wraps and scrolls */
+    bool password;                  /* shows dots; can't be cut or copied */
+    bool tabs;                      /* multiline: Tab types a tab instead of moving focus */
+    bool read_only;                 /* can be selected and copied, not changed */
+    float size;                     /* text size (0 = the text style's) */
+    BareFont font;
+    BareColor color;                /* text colour (alpha 0 = the style's) */
+    BareColor caret, selection;     /* alpha 0 = the theme's */
+} BareInput;
+
+#define bare_input(buf, cap, ...)  bare_input_((buf), (int)(cap), &(BareInput){ __VA_ARGS__ }, __FILE__, __LINE__)
+
+/* Editing commands. Each is bound to the platform's usual keys (below; "Mod"
+ * is Ctrl, Cmd on macOS) and can also be run directly, e.g. from a menu:
+ * bare_edit(0, BARE_EDIT_UNDO) acts on the focused field. Movements extend
+ * the selection when Shift is held. */
+typedef enum BareEditAction {
+    BARE_EDIT_NONE = 0,
+    BARE_EDIT_LEFT, BARE_EDIT_RIGHT,                /* ← →: a character; a selection collapses to its edge */
+    BARE_EDIT_WORD_LEFT, BARE_EDIT_WORD_RIGHT,      /* Ctrl+← → (macOS Option): a word */
+    BARE_EDIT_LINE_START, BARE_EDIT_LINE_END,       /* Home / End (macOS Cmd+← →); Home is smart: first non-space, then column 0 */
+    BARE_EDIT_UP, BARE_EDIT_DOWN,                   /* ↑ ↓: a line, keeping the column (single-line: start / end) */
+    BARE_EDIT_PAGE_UP, BARE_EDIT_PAGE_DOWN,         /* a page of lines */
+    BARE_EDIT_TEXT_START, BARE_EDIT_TEXT_END,       /* Ctrl+Home / End (macOS Cmd+↑ ↓) */
+    BARE_EDIT_SELECT_ALL,                           /* Mod+A */
+    BARE_EDIT_BACKSPACE, BARE_EDIT_DELETE,          /* the character before / after the caret, or the selection */
+    BARE_EDIT_DELETE_WORD_LEFT, BARE_EDIT_DELETE_WORD_RIGHT,   /* Ctrl+Backspace / Delete (macOS Option) */
+    BARE_EDIT_DELETE_LINE_LEFT,                     /* macOS Cmd+Backspace: to the line start */
+    BARE_EDIT_CUT, BARE_EDIT_COPY, BARE_EDIT_PASTE, /* Mod+X / C / V; also Shift+Delete, Ctrl+Insert, Shift+Insert */
+    BARE_EDIT_UNDO, BARE_EDIT_REDO,                 /* Mod+Z; Ctrl+Y, Mod+Shift+Z */
+    BARE_EDIT_ENTER,                                /* Enter: submit (single-line) or a new line */
+    BARE_EDIT_NEWLINE,                              /* Shift+Enter: a new line (multiline) */
+    BARE_EDIT_TAB,                                  /* types a tab (multiline .tabs only; else Tab moves focus) */
+    BARE_EDIT_BLUR,                                 /* Escape: leaves the field */
+    BARE_EDIT_OVERWRITE,                            /* Insert: typing replaces instead of inserting */
+    BARE_EDIT_ACTION_COUNT_
+} BareEditAction;
+
+/* Modifier bits for bare_edit_bind. BARE_MOD_SHORTCUT is Ctrl, or Cmd on macOS. */
+enum { BARE_MOD_SHIFT = 1, BARE_MOD_CTRL = 2, BARE_MOD_ALT = 4, BARE_MOD_SUPER = 8, BARE_MOD_SHORTCUT = 16 };
+
+void   bare_edit(BareId field, BareEditAction action);   /* field 0 = the focused one; runs when it's next declared */
+/* Binds key + mods (exactly) to an action in every field, replacing what it
+ * did; BARE_EDIT_NONE unbinds it. Movements bound this way also select with Shift. */
+void   bare_edit_bind(int key, int mods, BareEditAction action);
+
+/* Keyboard focus: clicking a .focusable element (or a field) focuses it,
+ * clicking anything else or Escape blurs it, Tab / Shift+Tab walk the
+ * focusable elements in the order they're declared. While a field has focus
+ * the keys it uses don't reach bare_key_pressed / bare_key_down. */
+void   bare_focus(BareId id);                  /* 0 blurs */
+BareId bare_focused(void);                     /* 0 = nothing */
+
+/* ------------------------------------------------------------------------ */
 /* Styles and themes                                                        */
 /* ------------------------------------------------------------------------ */
 
@@ -473,11 +589,13 @@ typedef struct BareTheme {
     BareColor text, muted;      /* body text, secondary text */
     BareColor accent;           /* links, primary buttons, selection */
     BareColor border;           /* hairlines and dividers */
+    BareColor selection;        /* selected text's background */
     BareBox panel;              /* a large flat surface */
     BareBox card;               /* a raised surface with a shadow */
     BareBox button;             /* a neutral button: hover and press looks, hand cursor */
     BareBox primary;            /* the accent button */
     BareBox row;                /* a list row that lights up under the mouse */
+    BareBox input;              /* text fields (bare_input); its .focus look is the focus ring */
     BareTextStyle title, heading, body, caption;
 } BareTheme;
 
@@ -545,7 +663,10 @@ typedef enum BareKey {
     BARE_KEY_F1, BARE_KEY_F2, BARE_KEY_F3, BARE_KEY_F4, BARE_KEY_F5, BARE_KEY_F6,
     BARE_KEY_F7, BARE_KEY_F8, BARE_KEY_F9, BARE_KEY_F10, BARE_KEY_F11, BARE_KEY_F12,
     BARE_KEY_MINUS, BARE_KEY_EQUALS, BARE_KEY_COMMA, BARE_KEY_PERIOD, BARE_KEY_SLASH,
-    BARE_KEY_COUNT_
+    BARE_KEY_SEMICOLON, BARE_KEY_APOSTROPHE, BARE_KEY_BACKSLASH, BARE_KEY_LEFT_BRACKET, BARE_KEY_RIGHT_BRACKET,
+    BARE_KEY_GRAVE,
+    BARE_KEY_COUNT_,
+    BARE_KEY_SHORTCUT = 1000    /* bare_key_down only: Ctrl, or Cmd on macOS */
 } BareKey;
 
 bool bare_key_down(BareKey key);        /* held now */
@@ -580,6 +701,7 @@ int       bare_close_(void);                                            /* retur
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line);
 int       bare_visible_(int count, float size, const char *file, int line);   /* the first item on screen */
 int       bare_visible_more_(int i);
+BareState bare_input_(char *buf, int cap, const BareInput *input, const char *file, int line);
 #if defined(__GNUC__)
 __attribute__((format(printf, 3, 4)))
 #endif
