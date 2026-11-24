@@ -140,6 +140,14 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 **Commits:** author CoolN. Never add a `Co-Authored-By` trailer (the user's rule); the Claude credit lives in
 `README.md` instead. Commit only when the user asks or a milestone is done.
 
+## Audit notes (2026-11-24)
+
+- Hardened arena/header allocation arithmetic and unsigned GPU handle validation; rejected gaps in extra render targets.
+- Added regression coverage for overflowing allocations, UINT32_MAX handles, target gaps and NULL document text with a positive length.
+- Glass backdrop allocation is deferred until glass is drawn; failed target allocations are retried. Runtime GPU validation and memory measurements remain outstanding.
+- Failed file-dialog event delivery frees its payload. Concurrent dialogs and shutdown during a dialog still need lifecycle testing.
+- GCC and MSVC Debug builds and headless suites passed before the final document regression; see current audit validation for the final run. MSVC reports existing CRT deprecation and Singularity C4701 warnings.
+
 ## Current status
 
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4

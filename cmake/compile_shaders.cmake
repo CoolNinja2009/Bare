@@ -48,4 +48,20 @@ foreach(entry bare:vert,frag glass:vert,frag pass:vert)
     endforeach()
 endforeach()
 
+# The pass vertex shader without v_uv, for fragment shaders that don't read it.
+set(base ${WORK}/pass_nouv_vert)
+run(${GLSLC} -fshader-stage=vert -DBARE_VERTEX -DBARE_NO_UV -O ${SRC}/pass.glsl -o ${base}.spv)
+run(${SHADERCROSS} ${base}.spv -s SPIRV -d DXIL -t vertex -o ${base}.dxil)
+run(${SHADERCROSS} ${base}.spv -s SPIRV -d MSL -t vertex -o ${base}.msl)
+embed(${base}.spv pass_nouv_vert_spirv ${header})
+embed(${base}.dxil pass_nouv_vert_dxil ${header})
+embed(${base}.msl pass_nouv_vert_msl ${header})
+
+# Both pass vertex shaders as DXBC too: on D3D12, canvas shaders made from DXBC
+# (see bare_shader_header.cmake) need a DXBC vertex half.
+foreach(name pass_vert pass_nouv_vert)
+    run(${SHADERCROSS} ${WORK}/${name}.spv -s SPIRV -d DXBC -t vertex -o ${WORK}/${name}.dxbc)
+    embed(${WORK}/${name}.dxbc ${name}_dxbc ${header})
+endforeach()
+
 message(STATUS "Wrote ${header}")

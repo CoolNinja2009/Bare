@@ -140,6 +140,7 @@ typedef struct BareGpuShader {
 
 typedef struct BareGpuPass {
     uint32_t    target, shader;
+    uint32_t    extra_targets[BARE_MAX_TARGETS - 1];   /* the shader's outputs 1..3; 0 = none */
     uint32_t    inputs[BARE_MAX_INPUTS];
     int         input_count;   /* inputs after the last non-zero one are unbound */
     const void *params;

@@ -155,7 +155,7 @@ BareDoc *bare_doc_create(void) {
 
 void bare_doc_set_text(BareDoc *d, const char *text, int len) {
     if (!d) return;
-    if (!text) text = "";
+    if (!text) { text = ""; len = 0; }
     size_t n = len < 0 ? strlen(text) : (size_t)len;
     char *copy = bare__alloc(&d->alloc, n ? n : 1);
     if (!copy) return;

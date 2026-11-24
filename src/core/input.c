@@ -92,6 +92,11 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *e) {
                e->time > 0 ? e->time : ctx->time);
         break;
     case BARE_EVENT_WHEEL:
+        if (ctx->mouse_in) {
+            float k = e->as.wheel.precise ? 1.0f : BARE_WHEEL_NOTCH;
+            ctx->wheel.x += e->as.wheel.dx * k;
+            ctx->wheel.y -= e->as.wheel.dy * k;   /* the DOM's deltaY is + downward */
+        }
         bare__scroll_wheel(ctx, e->as.wheel.dx, e->as.wheel.dy, e->as.wheel.precise);   /* scroll.c */
         break;
     case BARE_EVENT_KEY: {
@@ -135,6 +140,7 @@ bool bare__input_end(BareContext *ctx) {
     }
     if (top != ctx->hover_top) again = true;
     ctx->mouse_moved = false;
+    ctx->wheel = (BareVec2){ 0, 0 };
     ctx->press_new = false;
     ctx->press_began.count = 0;
     for (int s = 0; s < BARE__PRESS_COUNT; s++) {
@@ -158,6 +164,11 @@ BareCursor bare_ctx_cursor(const BareContext *ctx) {
 BareVec2 bare_mouse(void) {
     BareContext *ctx = bare_ctx_current();
     return ctx ? ctx->mouse : (BareVec2){ 0, 0 };
+}
+
+BareVec2 bare_wheel(void) {
+    BareContext *ctx = bare_ctx_current();
+    return ctx ? ctx->wheel : (BareVec2){ 0, 0 };
 }
 
 /* While a field has focus, keys that type don't count as held for the app

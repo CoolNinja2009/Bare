@@ -1,6 +1,7 @@
 /* arena.c: allocator plumbing and the bump arena (ARCHITECTURE §12). */
 #include "internal.h"
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 
 static void *libc_alloc(void *user, size_t size) { (void)user; return malloc(size); }
@@ -28,6 +29,7 @@ void bare__free(const BareAllocator *a, void *ptr, size_t size) {
 #define SIZED_HEADER 16
 
 void *bare__heap_alloc(const BareAllocator *a, size_t size) {
+    if (size > SIZE_MAX - SIZED_HEADER) return NULL;
     unsigned char *p = bare__alloc(a, size + SIZED_HEADER);
     if (!p) return NULL;
     memcpy(p, &size, sizeof size);
@@ -35,6 +37,7 @@ void *bare__heap_alloc(const BareAllocator *a, size_t size) {
 }
 
 void *bare__heap_realloc(const BareAllocator *a, void *ptr, size_t size) {
+    if (size > SIZE_MAX - SIZED_HEADER) return NULL;
     if (!ptr) return bare__heap_alloc(a, size);
     unsigned char *base = (unsigned char *)ptr - SIZED_HEADER;
     size_t old;
@@ -56,7 +59,11 @@ void bare__heap_free(const BareAllocator *a, void *ptr) {
 bool bare__grow(const BareAllocator *a, void **items, int *cap, int need, size_t item_size) {
     if (need <= *cap) return true;
     int new_cap = *cap ? *cap : 64;
-    while (new_cap < need) new_cap *= 2;
+    while (new_cap < need) {
+        if (new_cap > INT_MAX / 2) { new_cap = need; break; }
+        new_cap *= 2;
+    }
+    if (item_size && (size_t)new_cap > SIZE_MAX / item_size) return false;
     void *p = bare__realloc(a, *items, (size_t)*cap * item_size, (size_t)new_cap * item_size);
     if (!p) return false;
     *items = p;
@@ -78,6 +85,7 @@ void bare__arena_init(BareArena *arena, BareAllocator alloc, size_t block_size) 
 
 static BareArenaBlock *new_block(BareArena *arena, size_t min_size) {
     size_t size = BARE__MAX(arena->block_size, min_size);
+    if (size > SIZE_MAX - BLOCK_HEADER) return NULL;
     BareArenaBlock *b = bare__alloc(&arena->alloc, BLOCK_HEADER + size);
     if (!b) return NULL;
     b->next = NULL;
@@ -90,13 +98,16 @@ static BareArenaBlock *new_block(BareArena *arena, size_t min_size) {
 /* Where `size` bytes aligned to `align` would start in `b`, or NULL if they don't fit. */
 static unsigned char *fit(BareArenaBlock *b, size_t size, size_t align) {
     uintptr_t base = (uintptr_t)block_data(b);
+    if (b->used > b->size || base > UINTPTR_MAX - b->used ||
+        base + b->used > UINTPTR_MAX - (align - 1)) return NULL;
     uintptr_t p = (base + b->used + (align - 1)) & ~(uintptr_t)(align - 1);
-    if (p + size > base + b->size) return NULL;
+    if (p < base || p - base > b->size || size > b->size - (p - base)) return NULL;
     return (unsigned char *)p;
 }
 
 void *bare__arena_alloc(BareArena *arena, size_t size, size_t align) {
     BARE_ASSERT(align && (align & (align - 1)) == 0);
+    if (!align || (align & (align - 1)) || size > SIZE_MAX - align) return NULL;
     if (size == 0) size = 1;
     if (!arena->current) {
         if (!arena->first && !(arena->first = new_block(arena, size + align))) return NULL;

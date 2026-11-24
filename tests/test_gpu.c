@@ -96,7 +96,7 @@ TEST(mistakes_are_reported_and_skipped) {
     bare_pass(.target = img, .shader = sh, BARE_PARAMS(p));             /* not a canvas */
     CHECK(strstr(last_log, "live canvas") != NULL);
     bare_pass(.target = c, .shader = sh, .inputs = { c }, BARE_PARAMS(p));   /* reads its own target */
-    CHECK(strstr(last_log, "also the target") != NULL);
+    CHECK(strstr(last_log, "also a target") != NULL);
     bare_pass(.target = c, .shader = sh);                                /* params missing */
     CHECK(strstr(last_log, "takes params") != NULL);
     bare_pass(.target = c, .shader = plain, .inputs = { img, img });     /* more inputs than samplers */
@@ -173,7 +173,26 @@ TEST(nothing_without_a_context) {
     CHECK_NEAR(bare_image_size(1).x, 0, 0);
 }
 
+TEST(invalid_handles_and_target_slots) {
+    setup();
+    BareImage a = bare_canvas(.width = 8, .height = 8);
+    BareImage b = bare_canvas(.width = 8, .height = 8);
+    BareShader sh = bare_shader(&no_params);
+    frame();
+    CHECK(bare_image_size(UINT32_MAX).x == 0);
+    bare_image_free(UINT32_MAX);
+    bare_shader_free(UINT32_MAX);
+    bare_pass(.target = a, .shader = UINT32_MAX);
+    bare_pass(.target = a, .shader = sh, .extra_targets = { 0, b });
+    CHECK(strstr(last_log, "contiguous") != NULL);
+    CHECK(frame()->op_count == 0);
+    bare_pass(.target = a, .shader = sh, .extra_targets = { b });
+    CHECK(frame()->op_count == 1);
+    teardown();
+}
+
 int main(void) {
+    RUN(invalid_handles_and_target_slots);
     RUN(ops_reach_the_next_draw_list_once_and_in_order);
     RUN(passes_every_frame_reuse_memory);
     RUN(mistakes_are_reported_and_skipped);

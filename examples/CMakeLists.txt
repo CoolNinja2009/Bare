@@ -27,3 +27,12 @@ target_compile_options(glass_motion PRIVATE ${BARE_WARNINGS})
 bare_add_shaders(glass_motion OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/glass_motion/generated/glass_motion_shaders.h SOURCES
     glass_motion/shaders/dunes.glsl glass_motion/shaders/petals.glsl glass_motion/shaders/wheel.glsl
     glass_motion/shaders/icons.glsl)
+
+# Singularity: a black hole ray traced in real time; a pixel-exact port of a
+# Screen+ web wallpaper (two render targets, a 32-bit float buffer, bloom).
+add_executable(singularity singularity/singularity.c)
+target_link_libraries(singularity PRIVATE bare)
+target_compile_options(singularity PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(singularity OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/singularity/generated/singularity_shaders.h SOURCES
+    singularity/shaders/scene.glsl singularity/shaders/down.glsl singularity/shaders/up.glsl
+    singularity/shaders/comp.glsl singularity/shaders/probe.glsl)

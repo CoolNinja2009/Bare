@@ -8,7 +8,7 @@
 #include "internal.h"
 #include <string.h>
 
-#define MAX_PARAMS 1024
+#define MAX_PARAMS 4096   /* WebGL guarantees 224 vec4s (3584 bytes); SDL's uniform buffers hold 32 KB */
 
 static BareContext *need_ctx(const char *what) {
     BareContext *ctx = bare_ctx_current();
@@ -81,7 +81,7 @@ void bare__gpu_free(BareContext *ctx) {
 /* ---- images ---------------------------------------------------------------- */
 
 const BareImageRec *bare__image(const BareContext *ctx, BareImage id) {
-    if (!ctx || id == 0 || (int)id > ctx->image_count) return NULL;
+    if (!ctx || id == 0 || id > (uint32_t)ctx->image_count) return NULL;
     const BareImageRec *r = &ctx->images[id - 1];
     return r->alive && !r->internal ? r : NULL;
 }
@@ -123,7 +123,7 @@ static bool valid_size(BareContext *ctx, const char *what, int w, int h) {
 BareImage bare_canvas_(const BareCanvas *c) {
     BareContext *ctx = need_ctx("bare_canvas");
     if (!ctx || !valid_size(ctx, "bare_canvas", c->width, c->height)) return 0;
-    if (c->format < BARE_RGBA8 || c->format > BARE_R16F) {
+    if (c->format < BARE_RGBA8 || c->format > BARE_RGBA32F) {
         bare__log(ctx, "bare_canvas: unknown format %d", (int)c->format);
         return 0;
     }
@@ -131,6 +131,7 @@ BareImage bare_canvas_(const BareCanvas *c) {
     if (!op) return 0;
     BareImage id = new_image(ctx, c->width, c->height, c->format, true);
     if (!id) { ctx->gpu_pending.count--; return 0; }
+    ctx->images[id - 1].bottom_up = c->bottom_up;
     op->as.image = (BareGpuImage){ .id = id, .width = c->width, .height = c->height, .format = c->format,
                                    .nearest = c->nearest, .repeat = c->repeat, .renderable = true };
     return id;
@@ -181,7 +182,7 @@ BareVec2 bare_image_size(BareImage image) {
 /* ---- shaders ------------------------------------------------------------- */
 
 static const BareShaderRec *shader_rec(const BareContext *ctx, BareShader id) {
-    if (id == 0 || (int)id > ctx->shader_count) return NULL;
+    if (id == 0 || id > (uint32_t)ctx->shader_count) return NULL;
     const BareShaderRec *r = &ctx->shaders[id - 1];
     return r->alive ? r : NULL;
 }
@@ -236,6 +237,29 @@ void bare_pass_(const BarePass *p, const char *file, int line) {
         bare__log(ctx, "bare_pass at %s:%d: .target must be a live canvas (from bare_canvas)", file, line);
         return;
     }
+    for (int i = 0; i < BARE_MAX_TARGETS - 1; i++) {
+        if (!p->extra_targets[i]) continue;
+        if (i > 0 && !p->extra_targets[i - 1]) {
+            bare__log(ctx, "bare_pass at %s:%d: extra targets must be contiguous", file, line);
+            return;
+        }
+        const BareImageRec *t = bare__image(ctx, p->extra_targets[i]);
+        if (!t || !t->canvas) {
+            bare__log(ctx, "bare_pass at %s:%d: .extra_targets[%d] must be a live canvas", file, line, i);
+            return;
+        }
+        if (t->width != target->width || t->height != target->height) {
+            bare__log(ctx, "bare_pass at %s:%d: .extra_targets[%d] is %dx%d, .target is %dx%d; they must match",
+                      file, line, i, t->width, t->height, target->width, target->height);
+            return;
+        }
+        for (int j = -1; j < i; j++) {
+            if (p->extra_targets[i] == (j < 0 ? p->target : p->extra_targets[j])) {
+                bare__log(ctx, "bare_pass at %s:%d: a canvas is given twice as a target", file, line);
+                return;
+            }
+        }
+    }
     const BareShaderRec *sh = shader_rec(ctx, p->shader);
     if (!sh) {
         bare__log(ctx, "bare_pass at %s:%d: .shader isn't a live shader (from bare_shader)", file, line);
@@ -248,8 +272,10 @@ void bare_pass_(const BarePass *p, const char *file, int line) {
             bare__log(ctx, "bare_pass at %s:%d: input %d isn't a live image", file, line, i);
             return;
         }
-        if (p->inputs[i] == p->target) {
-            bare__log(ctx, "bare_pass at %s:%d: input %d is also the target; draw into a second canvas and swap",
+        bool is_target = p->inputs[i] == p->target;
+        for (int j = 0; j < BARE_MAX_TARGETS - 1; j++) is_target |= p->inputs[i] == p->extra_targets[j];
+        if (is_target) {
+            bare__log(ctx, "bare_pass at %s:%d: input %d is also a target; draw into a second canvas and swap",
                       file, line, i);
             return;
         }
@@ -275,6 +301,7 @@ void bare_pass_(const BarePass *p, const char *file, int line) {
     if (!op) return;
     BareGpuPass *g = &op->as.pass;
     g->target = p->target;
+    for (int i = 0; i < BARE_MAX_TARGETS - 1; i++) g->extra_targets[i] = p->extra_targets[i];
     g->shader = p->shader;
     for (int i = 0; i < BARE_MAX_INPUTS; i++) g->inputs[i] = p->inputs[i];
     g->input_count = sh->code->samplers;   /* the renderer binds every sampler the shader declares */

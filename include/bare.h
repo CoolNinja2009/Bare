@@ -324,7 +324,8 @@ typedef enum BareFormat {
     BARE_RGBA8 = 0,       /* default: 8-bit colour */
     BARE_RGBA16F,         /* half floats: HDR colour, simulation state */
     BARE_RG16F,           /* two half floats (e.g. velocity) */
-    BARE_R16F             /* one half float (e.g. pressure) */
+    BARE_R16F,            /* one half float (e.g. pressure) */
+    BARE_RGBA32F          /* full floats, for data that must stay exact (half floats where unsupported) */
 } BareFormat;
 
 typedef struct BareCanvas {
@@ -332,6 +333,8 @@ typedef struct BareCanvas {
     BareFormat format;
     bool nearest;         /* sample without filtering (default: bilinear) */
     bool repeat;          /* sampling outside 0..1 wraps (default: clamps to the edge) */
+    bool bottom_up;       /* rows run bottom to top, as in WebGL (gl_FragCoord.y = 0 at the bottom):
+                             .image shows it the right way up, so WebGL passes port unchanged */
 } BareCanvas;
 
 #define bare_canvas(...)  bare_canvas_(&(BareCanvas){ __VA_ARGS__ })
@@ -342,6 +345,9 @@ typedef struct BareShaderCode {
     unsigned spirv_size, dxil_size, msl_size;
     int samplers;         /* inputs it reads */
     int uniform_buffers;  /* 0 or 1: whether it takes params */
+    int no_uv;            /* 1: never reads v_uv (only gl_FragCoord) */
+    const unsigned char *dxbc;  /* optional, preferred on D3D12: FXC's code, as browsers make for WebGL */
+    unsigned dxbc_size;
 } BareShaderCode;
 
 typedef uint32_t BareShader;   /* 0 = none */
@@ -356,14 +362,19 @@ typedef enum BareBlend {
 } BareBlend;
 
 #define BARE_MAX_INPUTS 8
+#define BARE_MAX_TARGETS 4
 
 typedef struct BarePass {
     BareImage target;                   /* a canvas; not one of the inputs */
     BareShader shader;
     BareImage inputs[BARE_MAX_INPUTS];  /* bound to the shader's samplers 0, 1, ... */
     const void *params;                 /* the shader's uniform block (std140), copied; see BARE_PARAMS */
-    int params_size;                    /* bytes, up to 1024 */
+    int params_size;                    /* bytes, up to 4096 */
     BareBlend blend;
+    /* More canvases the same size as .target, written at the same time by the
+     * shader's outputs 1, 2, 3 (layout(location = 1) out ...), as WebGL's
+     * drawBuffers: one pass, several results. */
+    BareImage extra_targets[BARE_MAX_TARGETS - 1];
 } BarePass;
 
 #define bare_pass(...)    bare_pass_(&(BarePass){ __VA_ARGS__ }, __FILE__, __LINE__)
@@ -472,6 +483,21 @@ typedef struct BareState {
 #define bare_row(...)     BARE__CONTAINER(.dir = BARE_ROW, __VA_ARGS__)
 #define bare_column(...)  BARE__CONTAINER(.dir = BARE_COLUMN, __VA_ARGS__)
 #define bare_stack(...)   BARE__CONTAINER(.dir = BARE_STACK, __VA_ARGS__)    /* layers; .align places them */
+
+/* Glass surfaces use the normal box API. A preset supplies only the look;
+ * dimensions, position, children and interaction remain the app's choice.
+ * Draw backdrop content first inside bare_glass_stack, then glass surfaces.
+ * Adjacent surfaces with .glass.merge join as in ordinary Bare boxes. */
+typedef enum BareGlassPreset {
+    BARE_GLASS_CLEAR, BARE_GLASS_FROST, BARE_GLASS_LENS,
+    BARE_GLASS_DOCK, BARE_GLASS_DROP
+} BareGlassPreset;
+BareState bare_glass_surface_(BareGlassPreset preset, const BareBox *box, const char *file, int line);
+int bare_glass_layer_(BareGlassPreset preset, const BareBox *box, const char *file, int line);
+#define bare_glass_stack(...) bare_stack(__VA_ARGS__)
+#define bare_glass_surface(preset, ...) bare_glass_surface_((preset), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__)
+#define bare_glass_layer(preset, ...) \
+    for (int v = bare_glass_layer_((preset), &(BareBox){ __VA_ARGS__ }, __FILE__, __LINE__); v; v = bare_close_())
 
 /* State of the innermost open container (call inside its block). */
 BareState bare_this(void);
@@ -782,6 +808,9 @@ const BareTheme *bare_theme_light(void);
 
 /* Opens the window (logical pixels). One window is current; no handle needed. */
 bool  bare_window(int width, int height, const char *title);
+/* Request an alpha-composited window. Use a transparent bare_background() to
+ * let the desktop show through; compositor support varies by platform. */
+bool  bare_window_transparent(int width, int height, const char *title);
 
 /* Ends the previous frame (layout, animate, draw) and starts the next one.
  * Returns false when the window is closed. When nothing is animating and no
@@ -821,6 +850,11 @@ double bare_time(void);                 /* seconds since bare_window */
 float  bare_dt(void);                   /* seconds since the previous frame */
 
 BareVec2 bare_mouse(void);              /* logical pixels, window coordinates */
+/* How far the wheel turned this frame while the mouse was over the window, as
+ * the DOM's wheel deltaX / deltaY: logical pixels, a notch is 100, + = right /
+ * down (toward the end of a page). Scroll boxes still scroll; this is for apps
+ * that use the wheel themselves (zoom, a 3D camera). */
+BareVec2 bare_wheel(void);
 
 /* Keys by what they type on the user's keyboard layout (Ctrl+Z is Z on
  * AZERTY too); left and right modifiers count as one. */

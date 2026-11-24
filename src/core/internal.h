@@ -310,6 +310,7 @@ typedef struct BareImageRec {
     BareFormat format;
     bool       alive, canvas;
     bool       internal;        /* Bare's own (the glyph atlas): not the app's to free */
+    bool       bottom_up;       /* a canvas whose first row is the bottom of the picture */
     int32_t    next_free;
 } BareImageRec;
 
@@ -396,6 +397,7 @@ struct BareContext {
     uint8_t       key_down[BARE_KEY_COUNT_], key_pressed[BARE_KEY_COUNT_];
     BareCursor    cursor;
     bool          mouse_moved;       /* since the last frame ended */
+    BareVec2      wheel;             /* bare_wheel: DOM deltas since the last frame ended */
     BareVec2      press_pos;         /* where the left button last went down */
     double        press_time;
     int           click_count;       /* 1, 2 (double click), 3 (triple) for the last press */

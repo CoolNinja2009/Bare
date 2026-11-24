@@ -75,7 +75,27 @@ TEST(grow_doubles) {
     bare__free(&al, items, (size_t)cap * sizeof *items);
 }
 
+TEST(allocation_overflow_is_rejected) {
+    BareAllocator al = bare__default_allocator();
+    CHECK(bare__heap_alloc(&al, SIZE_MAX) == NULL);
+    void *p = bare__heap_alloc(&al, 16);
+    CHECK(p != NULL);
+    CHECK(bare__heap_realloc(&al, p, SIZE_MAX) == NULL);
+    bare__heap_free(&al, p);
+    void *items = NULL;
+    int cap = 0;
+    CHECK(!bare__grow(&al, &items, &cap, 100, SIZE_MAX));
+    CHECK(items == NULL && cap == 0);
+    BareArena a;
+    bare__arena_init(&a, al, 0);
+    CHECK(bare__arena_alloc(&a, SIZE_MAX, 16) == NULL);
+    CHECK(bare__arena_alloc(&a, 32, 16) != NULL);
+    CHECK(bare__arena_alloc(&a, SIZE_MAX - 32, 16) == NULL);
+    bare__arena_free(&a);
+}
+
 int main(void) {
+    RUN(allocation_overflow_is_rejected);
     RUN(arena_alignment_and_zeroing);
     RUN(arena_grows_for_big_allocations);
     RUN(arena_reset_reuses_blocks);

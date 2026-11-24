@@ -34,7 +34,7 @@ static float to_logical(void) {
     return density / scale;
 }
 
-static bool open_window(void *self, int width, int height, const char *title) {
+static bool open_window(void *self, int width, int height, const char *title, bool transparent) {
     (void)self;
     /* Bare draws the IME's composition inline in the field; the OS still
      * shows the candidate list. */
@@ -46,8 +46,9 @@ static bool open_window(void *self, int width, int height, const char *title) {
     /* Create at the requested logical size on the primary display. */
     float content = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (content <= 0) content = 1;
-    sdl.window = SDL_CreateWindow(title ? title : "Bare", (int)(width * content), (int)(height * content),
-                                  SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+    if (transparent) flags |= SDL_WINDOW_TRANSPARENT;
+    sdl.window = SDL_CreateWindow(title ? title : "Bare", (int)(width * content), (int)(height * content), flags);
     if (!sdl.window) {
         SDL_Log("bare: SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
@@ -349,7 +350,10 @@ static void dialog_done(void *user, const char *const *files, int filter) {
     e.type = sdl.file_event;
     e.user.data1 = user;   /* the request id, on the heap */
     e.user.data2 = files && files[0] ? SDL_strdup(files[0]) : NULL;
-    SDL_PushEvent(&e);
+    if (!SDL_PushEvent(&e)) {
+        SDL_free(e.user.data1);
+        SDL_free(e.user.data2);
+    }
 }
 
 static void file_dialog(void *self, uint64_t request, int kind, const char *filters, const char *path) {

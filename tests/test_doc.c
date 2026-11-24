@@ -386,7 +386,16 @@ TEST(wrapped_lines_take_rows_and_down_walks_them) {
     bare_doc_free(d);
 }
 
+TEST(null_text_with_explicit_length) {
+    BareDoc *d = doc_of("previous text");
+    CHECK(d != NULL);
+    bare_doc_set_text(d, NULL, 100);
+    CHECK(text_is(d, ""));
+    bare_doc_free(d);
+}
+
 int main(void) {
+    RUN(null_text_with_explicit_length);
     RUN(lines_load_and_save_with_their_endings);
     RUN(changes_move_every_selection_and_undo_restores_them);
     RUN(typing_runs_undo_a_word_at_a_time);

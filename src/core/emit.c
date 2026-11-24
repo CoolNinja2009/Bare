@@ -95,7 +95,8 @@ static void emit_image(BareContext *ctx, const BareElem *e, BareRect r) {
     float radius = BARE__MIN(e->box.radius * ctx->scale * e->vscale, BARE__MIN(r.w, r.h) * 0.5f);
     im->texture = e->box.image;
     im->rect = r;
-    im->uv = (BareRect){ 0, 0, 1, 1 };
+    const BareImageRec *rec = bare__image(ctx, im->texture);
+    im->uv = rec && rec->bottom_up ? (BareRect){ 0, 1, 1, -1 } : (BareRect){ 0, 0, 1, 1 };
     for (int k = 0; k < 4; k++) im->radius[k] = radius;
     im->tint = (BareColorF){ 1, 1, 1, e->opacity };
 }

@@ -34,9 +34,24 @@ foreach(src ${SOURCES})
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d DXIL -t fragment -o ${base}.dxil)
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d MSL -t fragment -o ${base}.msl)
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d JSON -t fragment -o ${base}.json)
+    # DXBC (FXC, shader model 5.1) is what D3D12 uses when present: browsers
+    # compile WebGL with FXC on Windows, so ported WebGL shaders give the same
+    # bits. It starts from unoptimized SPIR-V: glslc -O rewrites float maths
+    # (a * 0.6 + b * 0.6 -> 0.6 * (a + b)), which no browser does; FXC does the
+    # optimizing, as for WebGL. A shader FXC can't take ships without DXBC.
+    file(REMOVE ${base}.dxbc)
+    run(${GLSLC} -fshader-stage=frag -O0 ${src} -o ${base}_o0.spv)
+    execute_process(COMMAND ${SHADERCROSS} ${base}_o0.spv -s SPIRV -d DXBC -t fragment -o ${base}.dxbc
+                    RESULT_VARIABLE dxbc_rc OUTPUT_QUIET ERROR_QUIET)
     file(READ ${base}.json json)
     string(JSON samplers GET "${json}" samplers)
     string(JSON uniforms GET "${json}" uniform_buffers)
+    string(JSON inputs LENGTH "${json}" inputs)
+    if(inputs EQUAL 0)
+        set(no_uv 1)   # reads only gl_FragCoord: linked to the vertex half without v_uv
+    else()
+        set(no_uv 0)
+    endif()
     if(uniforms GREATER 1)
         message(FATAL_ERROR "${src}: at most one uniform block (set = 3, binding = 0)")
     endif()
@@ -50,9 +65,15 @@ foreach(src ${SOURCES})
         set(${fmt}_size ${size})
         string(APPEND text "static const unsigned char ${name}_${fmt}[${size}] = {\n    ${b}\n};\n")
     endforeach()
+    set(dxbc_ref "NULL, 0")
+    if(dxbc_rc EQUAL 0 AND EXISTS ${base}.dxbc)
+        bytes(${base}.dxbc b size)
+        string(APPEND text "static const unsigned char ${name}_dxbc[${size}] = {\n    ${b}\n};\n")
+        set(dxbc_ref "${name}_dxbc, ${size}")
+    endif()
     string(APPEND text "static const BareShaderCode ${name}_shader = {\n"
         "    ${name}_spirv, ${name}_dxil, ${name}_msl, ${spirv_size}, ${dxil_size}, ${msl_size}, "
-        "${samplers}, ${uniforms}\n};\n\n")
+        "${samplers}, ${uniforms}, ${no_uv}, ${dxbc_ref}\n};\n\n")
 endforeach()
 
 # Only touch the header when it changed, so unchanged shaders don't rebuild the app.

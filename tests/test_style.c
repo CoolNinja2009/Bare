@@ -226,7 +226,28 @@ TEST(a_tweaked_copy_of_a_theme) {
     reset();
 }
 
+TEST(glass_stack_presets_and_overrides) {
+    begin();
+    bare_glass_stack(.width = 400, .height = 300) {
+        bare_glass_layer(BARE_GLASS_FROST, .width = 160, .height = 80, .radius = 20) {
+            bare_glass_surface(BARE_GLASS_LENS, .width = 32, .height = 32,
+                               .glass = { .refraction = 1.8f, .blur = BARE_ZERO });
+        }
+        bare_glass_surface(BARE_GLASS_DOCK, .width = 100, .height = 40);
+        bare_glass_surface(BARE_GLASS_DROP, .width = 40, .height = 40);
+    }
+    end();
+    CHECK(B(1)->dir == BARE_STACK);
+    CHECK_NEAR(B(2)->glass.blur, 18, 0.01);
+    CHECK_NEAR(B(3)->glass.refraction, 1.8, 0.01);
+    CHECK_NEAR(B(3)->glass.blur, 0, 0.01);
+    CHECK_NEAR(B(4)->glass.merge, 56, 0.01);
+    CHECK_NEAR(B(5)->glass.merge, 56, 0.01);
+    reset();
+}
+
 int main(void) {
+    RUN(glass_stack_presets_and_overrides);
     RUN(element_fields_beat_the_style_and_the_style_beats_defaults);
     RUN(deliberate_nothings_override_a_style);
     RUN(clear_draws_no_background);

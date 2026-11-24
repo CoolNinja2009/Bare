@@ -632,6 +632,26 @@ Turn `bare_continuous` off again when nothing moves, so the app goes back to usi
 
 ## 12. Liquid glass
 
+For reusable glass surfaces, use `bare_glass_stack` and the preset surfaces:
+
+```c
+bare_glass_stack(.width = BARE_GROW, .height = BARE_GROW) {
+    draw_background();
+    bare_glass_layer(BARE_GLASS_FROST, .width = 320, .padding = 24, .radius = 28) {
+        bare_text("Settings");
+    }
+    bare_glass_surface(BARE_GLASS_LENS, .width = 96, .height = 96, .radius = 48);
+}
+```
+
+`BARE_GLASS_CLEAR`, `BARE_GLASS_FROST`, `BARE_GLASS_LENS`, `BARE_GLASS_DOCK`, and
+`BARE_GLASS_DROP` supply a look and default animation. All `BareBox` options work;
+`.glass` can replace a preset's glass settings. A custom `.style` replaces the
+preset look. Dock and drop presets have matching merge distance, so declare
+them next to each other to make them join. A glass layer holds controls and
+text; a surface is a leaf. Give moving or conditional surfaces stable `.id` values.
+
+
 Glass bends and frosts whatever was drawn **before** it (behind it):
 
 ```c

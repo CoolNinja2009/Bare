@@ -55,6 +55,7 @@ add_library(bare_core STATIC
     src/core/scroll.c
     src/core/style.c
     src/core/gpu.c
+    src/core/glass.c
     src/core/font.c
     src/core/text.c
     src/core/caret.c
@@ -114,6 +115,7 @@ if(BARE_BACKEND STREQUAL "SDL3")
         src/bare.c
         src/backend/sdl3/platform_sdl3.c
         src/backend/sdl3/renderer_sdl3gpu.c
+        src/backend/dxbc.c
     )
     target_include_directories(bare PRIVATE src shaders/generated)
     target_link_libraries(bare PUBLIC bare_core PRIVATE SDL3::SDL3-static)

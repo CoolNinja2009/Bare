@@ -18,6 +18,9 @@ static struct {
     float         width, height, scale;
     double        start, time, prev_time;
     int           capture_frames;     /* BARE_CAPTURE: frames left before quitting */
+    double        fixed_dt;           /* BARE_FIXED_DT: seconds per frame, whatever the clock says */
+    const char   *script;             /* BARE_EVENTS: input to play, by frame (see play_script) */
+    long          frames;             /* frames begun */
     BareTextInputKind text_input;     /* what the platform was last told */
     BareRect      text_rect;
     BareEvent     events[MAX_EVENTS];
@@ -29,11 +32,11 @@ static struct {
 static const char *clip_get(void *user) { (void)user; return app.platform.clipboard_get(app.platform.self); }
 static void clip_set(void *user, const char *text) { (void)user; app.platform.clipboard_set(app.platform.self, text); }
 
-bool bare_window(int width, int height, const char *title) {
+static bool window_open(int width, int height, const char *title, bool transparent) {
     if (app.open) return true;
     app.platform = bare__sdl3_platform();
     app.renderer = bare__sdl3gpu_renderer();
-    if (!app.platform.open_window(app.platform.self, width, height, title)) return false;
+    if (!app.platform.open_window(app.platform.self, width, height, title, transparent)) return false;
     if (!app.renderer.init(app.renderer.self, &app.platform)) {
         app.platform.close_window(app.platform.self);
         return false;
@@ -52,13 +55,36 @@ bool bare_window(int width, int height, const char *title) {
     /* BARE_CAPTURE: save frame BARE_CAPTURE_FRAMES (default 2) to a .bmp and quit. */
     const char *frames = getenv("BARE_CAPTURE_FRAMES");
     app.capture_frames = capture && *capture ? (frames && atoi(frames) > 0 ? atoi(frames) : 2) : 0;
+    /* BARE_FIXED_DT: frame n starts at n * dt seconds, so a capture of something
+     * animated is the same picture on every run (and comparable to a browser
+     * driven by the same clock). */
+    const char *fixed = getenv("BARE_FIXED_DT");
+    app.fixed_dt = fixed ? atof(fixed) : 0;
+    if (app.fixed_dt < 0) app.fixed_dt = 0;
+    app.script = getenv("BARE_EVENTS");
     app.open = true;
     app.dirty = true;
     return true;
 }
 
+bool bare_window(int width, int height, const char *title) {
+    return window_open(width, height, title, false);
+}
+
+bool bare_window_transparent(int width, int height, const char *title) {
+    return window_open(width, height, title, true);
+}
+
+static bool is_input(BareEventKind k) {
+    return k == BARE_EVENT_MOUSE_MOVE || k == BARE_EVENT_MOUSE_BUTTON || k == BARE_EVENT_MOUSE_LEAVE ||
+           k == BARE_EVENT_WHEEL || k == BARE_EVENT_KEY || k == BARE_EVENT_TEXT || k == BARE_EVENT_COMPOSITION;
+}
+
 /* Applies one platform event to the app state. */
 static void apply(const BareEvent *e) {
+    /* With a fixed clock nothing else may move the app either: the real mouse
+     * over the window would make every capture different. */
+    if ((app.fixed_dt > 0 || app.script) && is_input(e->kind) && e->time != -1) return;
     switch (e->kind) {
     case BARE_EVENT_QUIT: app.quit = true; break;
     case BARE_EVENT_FILE_CHOSEN: {
@@ -108,6 +134,45 @@ static void end_frame(void) {
     if (app.capture_frames > 0 && --app.capture_frames == 0) app.quit = true;
 }
 
+/* BARE_EVENTS="2:move:640:360; 3:down:640:360; 4:up:640:360; 5:wheel:-100":
+ * input played at the start of frame N (logical pixels; wheel in the DOM's
+ * deltaY), so tests and captures can hover, click and scroll. */
+static void play_script(void) {
+    for (const char *p = app.script; p && *p;) {
+        while (*p == ' ' || *p == ';') p++;
+        char kind[8] = { 0 };
+        long frame = 0;
+        float x = 0, y = 0;
+        int used = 0;
+        if (sscanf(p, "%ld:%7[a-z]:%f%n", &frame, kind, &x, &used) < 2) break;
+        p += used;
+        if (*p == ':') { p++; sscanf(p, "%f%n", &y, &used); p += used; }
+        while (*p && *p != ';') p++;
+        if (frame != app.frames + 1) continue;
+        BareEvent e;
+        memset(&e, 0, sizeof e);
+        e.time = -1;   /* played, not from the platform */
+        if (!strcmp(kind, "move")) {
+            e.kind = BARE_EVENT_MOUSE_MOVE;
+            e.as.mouse.x = x, e.as.mouse.y = y;
+        } else if (!strcmp(kind, "down") || !strcmp(kind, "up")) {
+            e.kind = BARE_EVENT_MOUSE_BUTTON;
+            e.as.button.button = 1;
+            e.as.button.down = kind[0] == 'd';
+            e.as.button.x = x, e.as.button.y = y;
+        } else if (!strcmp(kind, "wheel")) {
+            e.kind = BARE_EVENT_WHEEL;
+            e.as.wheel.dy = -x;
+            e.as.wheel.precise = true;
+        } else if (!strcmp(kind, "leave")) {
+            e.kind = BARE_EVENT_MOUSE_LEAVE;
+        } else {
+            continue;
+        }
+        apply(&e);
+    }
+}
+
 bool bare_frame(void) {
     if (!app.open) return false;
     if (app.platform.run) {
@@ -129,9 +194,11 @@ bool bare_frame(void) {
     int n = app.platform.poll_events(app.platform.self, app.events, MAX_EVENTS, wait);
     for (int i = 0; i < n; i++) apply(&app.events[i]);
     if (app.quit) return false;
+    if (app.script) play_script();
 
     app.prev_time = app.time;
-    app.time = app.platform.time(app.platform.self) - app.start;
+    app.time = app.fixed_dt > 0 ? (double)app.frames * app.fixed_dt : app.platform.time(app.platform.self) - app.start;
+    app.frames++;
     bare_ctx_begin(app.ctx, app.width, app.height, app.scale, app.time);
     app.in_frame = true;
     return true;

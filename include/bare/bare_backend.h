@@ -20,7 +20,7 @@ typedef enum BareNativeKind {
 typedef struct BarePlatform {
     void *self;
     /* Opens the window hidden; show_window reveals it after the first frame is drawn. */
-    bool   (*open_window)(void *self, int width, int height, const char *title);
+    bool   (*open_window)(void *self, int width, int height, const char *title, bool transparent);
     void   (*show_window)(void *self);
     void   (*close_window)(void *self);
     /* Fills `out` with up to `max` events. If none are queued, blocks up to
