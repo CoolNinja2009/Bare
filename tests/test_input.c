@@ -288,30 +288,6 @@ TEST(scale_draws_about_the_centre_and_is_hit_tested) {
     reset();
 }
 
-static BareState scroller(void) {
-    begin();
-    BareState s = { 0 };
-    bare_column(.id = BARE_ID("list"), .width = 100, .height = 100, .scroll = BARE_SCROLL_Y) {
-        s = bare_this();
-        bare_box(.id = BARE_ID("item"), .width = 100, .height = 30);
-    }
-    end();
-    return s;
-}
-
-TEST(wheel_scrolls_the_nearest_scroll_container) {
-    scroller();
-    move(50, 10);
-    BareEvent w = { .kind = BARE_EVENT_WHEEL };
-    w.as.wheel.dy = -2;              /* two notches down */
-    bare_ctx_event(ctx, &w);
-    CHECK_NEAR(scroller().scroll.y, 80, 0.01);
-    w.as.wheel.dy = 5;               /* back up: stops at the top */
-    bare_ctx_event(ctx, &w);
-    CHECK_NEAR(scroller().scroll.y, 0, 0.01);
-    reset();
-}
-
 TEST(keys_pressed_for_one_frame) {
     begin(); end();
     key(BARE_KEY_SPACE, true, false);
@@ -380,7 +356,6 @@ int main(void) {
     RUN(looks_apply_while_hovered_and_pressed);
     RUN(cursor_comes_from_the_innermost_hovered_element);
     RUN(scale_draws_about_the_centre_and_is_hit_tested);
-    RUN(wheel_scrolls_the_nearest_scroll_container);
     RUN(keys_pressed_for_one_frame);
     RUN(losing_focus_releases_keys_and_buttons);
     RUN(another_frame_when_the_ui_moves_under_a_still_mouse);

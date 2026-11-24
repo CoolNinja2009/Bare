@@ -80,10 +80,22 @@ typedef struct BareNode {
     int32_t  next_free;
     uint64_t last_frame;       /* frame it was last declared in */
     BareRect rect;             /* where it was drawn last frame (visual: offset and scale), logical pixels */
-    BareVec2 scroll;           /* wheel-driven scroll offset (applied to layout in M6) */
+    /* Scroll containers (scroll.c). The offset is stepped at the start of a
+     * frame, so the app and layout see the value this frame draws. */
+    BareVec2 scroll;           /* drawn offset, logical pixels */
+    BareVec2 scroll_to;        /* where it's heading (wheel, drag), within the content */
+    BareVec2 scroll_v;         /* spring velocity */
+    BareVec2 content;          /* last layout: content size, padding included */
+    BareVec2 view;             /* last layout: box size */
+    float    virt_start;       /* last layout: where a bare_visible run starts, from the box's start */
+    double   scroll_seen;      /* last time it scrolled or the mouse moved over it (scrollbars show) */
+    uint8_t  bars;             /* scrollbar rails present last frame: bit 0 = x, bit 1 = y */
+    uint8_t  scroll_flags;     /* BARE__SCROLL_* */
     uint32_t anim;             /* animation set index + 1; 0 = never animated (anim.c) */
     bool     dup_warned;       /* a duplicate of this explicit ID was reported once */
 } BareNode;
+
+enum { BARE__SCROLL_MOVING = 1, BARE__SCROLL_POKED = 2 };
 
 typedef struct BareStore {
     BareNode *nodes; int node_count, node_cap;
@@ -162,6 +174,15 @@ typedef struct BareElem {
     BareRect    rect;               /* layout result, then (after bare__animate) the animated rect */
     BareRect    target;             /* the layout result, kept by bare__animate */
     BareText   *text;               /* bare_text payload (frame arena), NULL for boxes */
+    /* Scroll containers (scroll.c). */
+    uint8_t     overlay;            /* 1 / 2: the x / y scrollbar rail of its parent; outside the flex flow */
+    int32_t     bar[2];             /* element index of its x / y rail, 0 = none */
+    float       content[2];         /* content size per axis, padding included (layout) */
+    bool        virt;               /* holds a bare_visible run: */
+    int         lead_at, tail_at;   /*   space for the items not declared goes before these children */
+    float       lead, tail;
+    int         virt_count, virt_last;
+    float       virt_stride;
 } BareElem;
 
 #define BARE__MAX_DEPTH 256
@@ -244,6 +265,7 @@ typedef struct BareHit {
     BareRect clip;              /* intersection of clipping ancestors */
     bool     passthrough;
     uint8_t  scroll;            /* BareScroll */
+    uint8_t  bar;               /* 1 / 2: the x / y scrollbar rail of its parent */
 } BareHit;
 
 /* An element and its ancestors (innermost first), by ID. */
@@ -272,6 +294,16 @@ struct BareContext {
     BareId        hover_top;         /* innermost hovered element this frame (0 = none) */
     uint8_t       key_down[BARE_KEY_COUNT_], key_pressed[BARE_KEY_COUNT_];
     BareCursor    cursor;
+    bool          mouse_moved;       /* since the last frame ended */
+    BareId        drag_id;           /* scroll container whose scrollbar thumb is held (0 = none) */
+    int           drag_axis;
+    float         drag_grab;         /* where along the thumb it was grabbed, logical pixels */
+
+    bool          scroll_active;     /* some scroll offset is still moving toward its target */
+    bool          scroll_started;    /* scroll_time is valid */
+    double        scroll_time;       /* time of the last scroll step */
+    float         scroll_frame;      /* last measured frame interval while scrolling */
+    double        wake_at;           /* a frame is wanted at this time (negative = none) */
 
     BareImageRec  *images;  int image_count, image_cap, image_free;   /* by id - 1 */
     BareShaderRec *shaders; int shader_count, shader_cap, shader_free;
@@ -330,6 +362,7 @@ int  bare__hit_find(const BareContext *ctx, BareVec2 p);              /* topmost
 void bare__hit_chain(const BareContext *ctx, int index, BareChain *out);
 bool bare__chain_has(const BareChain *c, BareId id);
 BareRect bare__visual_rect(const BareElem *e);
+BareRect bare__clip_rect(const BareElem *e);                         /* what a clipping box clips to */
 
 /* gpu.c */
 void bare__gpu_publish(BareContext *ctx);       /* pending ops -> the draw list */
@@ -343,5 +376,19 @@ bool bare__input_end(BareContext *ctx);         /* clears one-frame input; true 
 
 /* emit.c */
 void bare__emit(BareContext *ctx);
+
+/* scroll.c */
+#define BARE__BAR_HIT   14.0f   /* scrollbar rail thickness: the part that takes the mouse */
+#define BARE__BAR_INSET 2.0f    /* gap between the bar and the box's edges */
+bool  bare__scrolls(uint8_t scroll, int axis);
+void  bare__scroll_begin(BareContext *ctx);                         /* steps offsets toward their targets */
+void  bare__scroll_close(BareContext *ctx, int index);              /* a container closes: its scrollbars */
+void  bare__scroll_fit(BareContext *ctx, int index);                /* layout: clamp, remember the content */
+void  bare__scroll_thumb(float view, float content, float scroll, float other, float *pos, float *len);
+float bare__scroll_drawn(const BareContext *ctx, const BareElem *e, int axis);   /* snapped to pixels */
+void  bare__scroll_wheel(BareContext *ctx, float dx, float dy, bool precise);
+void  bare__scroll_press(BareContext *ctx, int hit, BareVec2 p);    /* left button down on a hit */
+void  bare__scroll_drag(BareContext *ctx, BareVec2 p);
+void  bare__want_frame_at(BareContext *ctx, double time);
 
 #endif /* BARE_INTERNAL_H */

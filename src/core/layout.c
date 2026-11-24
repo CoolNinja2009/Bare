@@ -11,6 +11,10 @@
  *   5. resolve y   top-down
  *   6. position    top-down    padding, gap, justify, align
  *
+ * Scroll boxes (scroll.c): their scrollbar rails are children outside the
+ * sibling chain, so the flex passes never see them; layout sizes and places
+ * them by hand. The scroll offset isn't applied here but in bare__transforms.
+ *
  * Sizes: > 0 fixed pixels; BARE_FIT (0) content; BARE_GROW share of the free
  * space by .grow (like CSS flex: 1, basis 0, never below its content's
  * minimum); BARE_PERCENT(p) of the parent's content box; BARE_ZERO a real 0. */
@@ -75,12 +79,20 @@ static void fit_pass(BareContext *ctx, int a) {
             pref += gaps;
             minc += gaps;
         }
+        if (along && e->virt) {   /* the items of a bare_visible run that weren't declared */
+            pref += e->lead + e->tail;
+            minc += e->lead + e->tail;
+        }
         if (e->text) {   /* text: unwrapped line / longest word across; wrapped lines down */
             pref = a ? bare__text_height(e->text) : e->text->max_line;
             minc = a ? pref : e->text->min_word;
         }
         pref += pads(b, a);
         minc += pads(b, a);
+        /* A box that clips or scrolls can be squeezed below its content (CSS
+         * makes min-size: auto 0 for scroll containers): that's what lets a
+         * scroll box in a column take the space there is and scroll the rest. */
+        if (b->clip || b->scroll) minc = pads(b, a);
         if (kind(b, a) == FIXED) pref = minc = spec(b, a) > 0 ? spec(b, a) : 0;
         e->fit[a] = clamp_size(pref, b, a);
         e->minc[a] = BARE__MIN(clamp_size(minc, b, a), e->fit[a]);
@@ -124,6 +136,7 @@ static void flex(BareContext *ctx, BareElem *e, int a, float inner) {
         *size_of(k, a) = s;
         used += s;
     }
+    if (e->virt) used += e->lead + e->tail;
 
     /* Grow: split the free space by weight. A child that would go below its
      * content minimum or above its max is frozen there, and the rest is
@@ -164,6 +177,7 @@ static void flex(BareContext *ctx, BareElem *e, int a, float inner) {
      * content minimum. Fixed and percent sizes don't shrink (as in CSS with
      * an explicit size). */
     float over = used - avail;
+    if (bare__scrolls(e->box.scroll, a)) over = 0;   /* a scroll box scrolls its overflow instead */
     for (int round = 0; over > 0.01f && round < 16; round++) {
         float total = 0;
         for (int c = e->first_child; c >= 0; c = el[c].next_sibling) {
@@ -192,17 +206,49 @@ static void flex(BareContext *ctx, BareElem *e, int a, float inner) {
     }
 }
 
+/* How far a scroll box's content reaches along an axis, padding included. */
+static float content_extent(const BareContext *ctx, const BareElem *e, int a) {
+    const BareElem *el = ctx->elems;
+    float sum = 0, most = 0;
+    for (int c = e->first_child; c >= 0; c = el[c].next_sibling) {
+        float s = a ? el[c].rect.h : el[c].rect.w;
+        sum += s;
+        most = BARE__MAX(most, s);
+    }
+    if (main_axis(&e->box) != a) return most + pads(&e->box, a);
+    if (e->child_count > 1) sum += e->box.gap * (float)(e->child_count - 1);
+    if (e->virt) sum += e->lead + e->tail;
+    return sum + pads(&e->box, a);
+}
+
+/* Scrollbar rails: as long as the thumb along their axis, BAR_HIT across. */
+static void size_rails(BareContext *ctx, BareElem *e, int a) {
+    for (int r = 0; r < 2; r++) {
+        if (!e->bar[r]) continue;
+        BareElem *rail = &ctx->elems[e->bar[r]];
+        if (r != a) { *size_of(rail, a) = BARE__BAR_HIT; continue; }
+        float pos, len, other = e->bar[1 - r] ? BARE__BAR_HIT : 0.0f;
+        bare__scroll_thumb(*size_of(e, a), e->content[a], 0, other, &pos, &len);
+        *size_of(rail, a) = len;
+    }
+}
+
 static void resolve_pass(BareContext *ctx, int a) {
     BareElem *el = ctx->elems;
     for (int i = 0; i < ctx->elem_count; i++) {
         BareElem *e = &el[i];
-        if (e->first_child < 0) continue;
-        float inner = BARE__MAX(*size_of(e, a) - pads(&e->box, a), 0.0f);
-        if (main_axis(&e->box) == a) {
-            flex(ctx, e, a, inner);
-        } else {
-            for (int c = e->first_child; c >= 0; c = el[c].next_sibling)
-                *size_of(&el[c], a) = cross_size(e, &el[c], a, inner);
+        if (e->first_child >= 0) {
+            float inner = BARE__MAX(*size_of(e, a) - pads(&e->box, a), 0.0f);
+            if (main_axis(&e->box) == a) {
+                flex(ctx, e, a, inner);
+            } else {
+                for (int c = e->first_child; c >= 0; c = el[c].next_sibling)
+                    *size_of(&el[c], a) = cross_size(e, &el[c], a, inner);
+            }
+        }
+        if (e->box.scroll) {
+            e->content[a] = content_extent(ctx, e, a);
+            size_rails(ctx, e, a);
         }
     }
 }
@@ -213,10 +259,34 @@ static float align_t(BareAlign al) {
     return al == BARE_CENTER ? 0.5f : al == BARE_END ? 1.0f : 0.0f;
 }
 
+/* Clamps the offset to this layout's content, then puts the rails at the
+ * box's far edges, where the thumbs are. */
+static void place_rails(BareContext *ctx, int i) {
+    bare__scroll_fit(ctx, i);
+    BareElem *e = &ctx->elems[i];
+    if (e->node < 0) return;
+    const BareNode *n = &ctx->store.nodes[e->node];
+    for (int r = 0; r < 2; r++) {
+        if (!e->bar[r]) continue;
+        BareElem *rail = &ctx->elems[e->bar[r]];
+        float pos, len, other = e->bar[1 - r] ? BARE__BAR_HIT : 0.0f;
+        bare__scroll_thumb(r ? e->rect.h : e->rect.w, e->content[r], r ? n->scroll.y : n->scroll.x, other,
+                           &pos, &len);
+        if (r) {
+            rail->rect.x = e->rect.x + e->rect.w - BARE__BAR_HIT;
+            rail->rect.y = e->rect.y + pos;
+        } else {
+            rail->rect.x = e->rect.x + pos;
+            rail->rect.y = e->rect.y + e->rect.h - BARE__BAR_HIT;
+        }
+    }
+}
+
 static void position_pass(BareContext *ctx) {
     BareElem *el = ctx->elems;
     for (int i = 0; i < ctx->elem_count; i++) {
         BareElem *e = &el[i];
+        if (e->box.scroll) place_rails(ctx, i);
         if (e->first_child < 0) continue;
         const BareBox *b = &e->box;
         float origin[2] = { e->rect.x + b->pad.left, e->rect.y + b->pad.top };
@@ -236,6 +306,7 @@ static void position_pass(BareContext *ctx) {
         int n = e->child_count;
         for (int c = e->first_child; c >= 0; c = el[c].next_sibling) total += *size_of(&el[c], m);
         if (n > 1) total += b->gap * (float)(n - 1);
+        if (e->virt) total += e->lead + e->tail;
         float free = inner[m] - total;
 
         float lead = 0, between = 0;
@@ -251,8 +322,14 @@ static void position_pass(BareContext *ctx) {
         }
 
         float cursor = origin[m] + lead;
-        for (int c = e->first_child; c >= 0; c = el[c].next_sibling) {
+        int ord = 0;
+        for (int c = e->first_child; c >= 0; c = el[c].next_sibling, ord++) {
             BareElem *k = &el[c];
+            if (e->virt && ord == e->lead_at) {   /* room for the undeclared items before the run */
+                if (e->node >= 0) ctx->store.nodes[e->node].virt_start = cursor - *pos_of(e, m);
+                cursor += e->lead;
+            }
+            if (e->virt && ord == e->tail_at) cursor += e->tail;   /* and after it */
             *pos_of(k, m) = cursor;
             cursor += *size_of(k, m) + b->gap + between;
             *pos_of(k, x) = origin[x] + (inner[x] - *size_of(k, x)) * align_t(b->align);
@@ -273,7 +350,15 @@ void bare__transforms(BareContext *ctx) {
         BareElem *e = &el[i];
         float pa = 1.0f;
         BareVec2 pt = { 0, 0 };
-        if (e->parent >= 0) { pa = el[e->parent].vscale; pt = el[e->parent].vt; }
+        if (e->parent >= 0) {
+            const BareElem *p = &el[e->parent];
+            pa = p->vscale;
+            pt = p->vt;
+            if (p->box.scroll && !e->overlay) {   /* scrolled content moves; its scrollbars don't */
+                pt.x -= pa * bare__scroll_drawn(ctx, p, 0);
+                pt.y -= pa * bare__scroll_drawn(ctx, p, 1);
+            }
+        }
         float k = e->box.scale;
         float cx = e->rect.x + e->rect.w * 0.5f, cy = e->rect.y + e->rect.h * 0.5f;
         e->vscale = pa * k;

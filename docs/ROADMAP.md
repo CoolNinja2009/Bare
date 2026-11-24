@@ -50,7 +50,7 @@ Done 2026-11-23.
   (loupe) and `.light` (rim light direction); `examples/glass_motion/`. Still to do: glass that wobbles/stretches with
   velocity (liquid feel), rotation (M10) for tilted entrances.
 - Light that responds to the content behind (adaptive tint and highlight), and optional pointer-driven light.
-- Glass inside clips and scroll containers (M6). ~~Glass on text (M5)~~ done: text on glass and glass refracting
+- ~~Glass inside clips and scroll containers (M6)~~ done: glass is scissored like everything else (`examples/scroll.c`). ~~Glass on text (M5)~~ done: text on glass and glass refracting
   text both work (`examples/text.c` loupe, labels in `glass_motion/` and the fluid panel).
 
 ## [x] M2: Flexbox layout and draw commands
@@ -174,7 +174,20 @@ widths match glyph advances; atlas packing never overlaps and reports uploads; a
 `.radius` = half its size.
 **Done when:** text is crisp at 100% and 150%/200% DPI; resizing rewraps smoothly.
 
-## [ ] M6: Clipping and scroll containers
+## [x] M6: Clipping and scroll containers
+
+Done 2026-11-24. Scroll offsets are retained per node and stepped at the *start* of a frame (so `BareState.scroll`,
+the visible-range helper and layout see the value drawn), and applied as a transform snapped to physical pixels,
+not in layout pass 6: scrolled text stays sharp and `.animate_layout` children don't chase the scroll. A notch is
+100 px (Chrome on Windows); SDL's fractional wheel values (touchpads) are followed directly. Hand-off follows browsers:
+the first scroller in the chain that can move takes the whole delta. Shift + wheel scrolls sideways. Like CSS, a box
+that clips or scrolls can be squeezed below its content. The scrollbar is two core-made elements (a draggable rail and
+a bar that fades and widens via `.animate`), outside the flex flow; its fade-out uses a new core wake time
+(`bare_ctx_wake_time`) instead of drawing frames while waiting. The helper is `bare_visible(i, count, size) { ... }`
+(a loop; space for undeclared items is added by layout, so headers and footers work). Emit culls elements outside
+their clip. Tests: `tests/test_scroll.c` (20). Checked by injecting SDL wheel, swipe and drag events from a scratch
+build and capturing (D3D12 = Vulkan, GCC = MSVC). 10,000 rows: ~14 us of core time per frame while scrolling.
+Not verified: a real touchpad and a real mouse wheel by hand. Clips are rectangles (rounded clipping stays later).
 
 **Goal:** `.clip` and `.scroll` work, including nesting.
 
@@ -262,7 +275,9 @@ needed; **beyond** = something the web can't do as easily.
 | `z-index` | later siblings draw on top; floating layers later | partial |
 | `align-self`, `aspect-ratio`, `flex-wrap`, `margin` | `.self`, `.aspect`, `.wrap`, `.margin` | M10 |
 | `display: grid` | grid layout | later |
-| `overflow: hidden / scroll` | `.clip`, `.scroll` (smooth, nested) | M6 |
+| `overflow: hidden / auto` | `.clip`, `.scroll` (smooth, nested, chaining, draggable overlay scrollbar) | done |
+| virtualized long lists (react-window) | `bare_visible(i, count, size)` | done, beyond |
+| `scrollTo`, `scrollIntoView`, keyboard scrolling | | later |
 | `display: none`, `order` | don't declare it / declare in that order (immediate mode) | C |
 | `vw`, `vh`, `calc()`, media queries | `bare_window_size()` and arithmetic, `if (win.x < 700)` | C |
 | **Looks** | | |

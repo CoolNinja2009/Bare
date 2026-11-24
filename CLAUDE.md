@@ -133,22 +133,23 @@ Both compilers must build warning-free; the API header is checked with `-Wall -W
 
 One roadmap milestone per session: write the code, write headless tests, build with both compilers when practical,
 run tests and the milestone's example, fix failures, then update **Current status** below and tick the milestone in
-`docs/ROADMAP.md`. After changes to the renderer, the frame loop or core hot paths, rerun `bench\bench.ps1` (mouse
-off the screen) and update `bench/README.md` and the **Optimizations** list below. Keep `docs/GUIDE.md` (the user-facing tutorial) and the web parity checklist in the roadmap true.
+`docs/ROADMAP.md`. After changes to the renderer, the frame loop or core hot paths, **ask the user** before running
+`bench\bench.ps1` (its windows are pinned on top of everything, fullscreen apps included; or give them the command),
+then update `bench/README.md` and the **Optimizations** list below. Keep `docs/GUIDE.md` (the user-facing tutorial) and the web parity checklist in the roadmap true.
 
 **Commits:** author CoolN. Never add a `Co-Authored-By` trailer (the user's rule); the Claude credit lives in
 `README.md` instead. Commit only when the user asks or a milestone is done.
 
 ## Current status
 
-**2026-11-23: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
-(animation) and M5 (text and images) done.** Next: M6 (clipping and scroll containers); the optimizations below can
-be interleaved.
+**2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
+(animation), M5 (text and images) and M6 (clipping and scrolling) done.** Next: M7 (style system); the optimizations
+below can be interleaved.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
   Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-  `glass_motion/`, `fluid/`. 8 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  `scroll.c`, `glass_motion/`, `fluid/`. 9 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -195,8 +196,21 @@ be interleaved.
   200 fps: CPU 7.4-8.2% of a core vs 22-37%; GPU equal (~6%); working set 90-153 MB vs 461-626 MB; 1 process vs
   8-18; idle 0% vs never idle; startup ~650 ms vs Edge 525-720 ms (Edge was faster in the post-M5 run); one
   4.3 MB exe. Unchanged after M5.
-- Stand-ins until their milestone: clip push/pop pairing is tested when clips exist (M6). `layout.c`, `cards.c` and
-  `buttons.c` still use grey bars where labels would go.
+- Clipping and scrolling (M6, `src/core/scroll.c`): `.clip` / `.scroll` push scissor clips (inside the border,
+  intersected, whole pixels) and cull what's outside; hits respect them. Offsets live on the node, glide on a critically
+  damped spring stepped at frame *begin* (the app sees this frame's value), are applied as a pixel-snapped transform
+  (sharp text, `.animate_layout` children don't lag), clamp to the content; the wheel chains from inner to outer
+  scrollers at their ends, Shift turns it sideways, touchpad fractions are followed directly (`precise`), a notch is
+  100 px. Clip/scroll boxes can be squeezed below their content (CSS min-size 0); scroll axes never shrink children.
+  Overlay scrollbar = two core-made elements outside the flex flow (draggable rail + bar fading/widening via
+  `.animate`); its fade-out uses the new `bare_ctx_wake_time` (bare.c sleeps until then). `bare_visible(i, count,
+  size)` declares only visible items; layout reserves the rest (`lead` / `tail`), so headers/footers and the scrollbar
+  are right: ~14 us core time per frame for 10,000 rows (~8.5 ms if all declared). `scroll.c` example (10,000 rows,
+  a page of sideways strips, glass in a strip) checked by injected SDL wheel/swipe/drag events and captures; D3D12 =
+  Vulkan and GCC = MSVC pixel for pixel. Fluid bench after M6: 8.8-9.3% of a core vs 7.6-8.0% for the previous
+  commit measured the same hour; the core frame is ~14 us, so this is likely noise but wasn't confirmed (the user
+  asked to stop running the bench). Not verified by hand: a real mouse wheel and touchpad.
+- Stand-ins: `layout.c`, `cards.c` and `buttons.c` still use grey bars where labels would go.
 - Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
   and the motion was checked in captures); DPI scale above 100%, including text sharpness at 150%/200% (this display
   is 100%; the core's 1.5x/2x maths and glyph sizes are unit-tested); live window resizing on Windows (SDL's modal

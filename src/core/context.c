@@ -41,6 +41,7 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     ctx->clear = BARE_RGB(24, 24, 28);
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
+    ctx->wake_at = -1;
     return ctx;
 }
 
@@ -80,6 +81,7 @@ void bare_ctx_begin(BareContext *ctx, float width, float height, float scale, do
     ctx->scale = scale > 0 ? scale : 1.0f;
     ctx->time = time;
     ctx->in_frame = true;
+    bare__scroll_begin(ctx);  /* this frame's scroll offsets, before anyone reads them */
     bare__input_begin(ctx);   /* before any element asks whether it's hovered */
     bare__tree_begin(ctx);
 }
@@ -105,7 +107,7 @@ const BareDrawList *bare_ctx_end(BareContext *ctx, bool *still_animating) {
         const BareElem *e = &ctx->elems[i];
         if (e->node >= 0) ctx->store.nodes[e->node].rect = bare__visual_rect(e);
     }
-    bool more = bare__input_end(ctx) || ctx->anim_active || ctx->text_redraw;
+    bool more = bare__input_end(ctx) || ctx->anim_active || ctx->text_redraw || ctx->scroll_active;
     ctx->text_redraw = false;
     if (more && still_animating) *still_animating = true;
     bare__store_evict(ctx, ctx->frame_index);

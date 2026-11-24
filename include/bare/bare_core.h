@@ -189,13 +189,16 @@ typedef enum BareEventKind {
 
 enum { BARE_MOUSE_LEFT = 1, BARE_MOUSE_MIDDLE = 2, BARE_MOUSE_RIGHT = 3 };
 
+/* Logical pixels one wheel notch scrolls (Chrome on Windows: 100). */
+#define BARE_WHEEL_NOTCH 100.0f
+
 typedef struct BareEvent {
     BareEventKind kind;
     double time;
     union {
         struct { float x, y; } mouse;                       /* logical pixels */
         struct { int button; bool down; float x, y; } button;
-        struct { float dx, dy; bool precise; } wheel;       /* + = right / up; precise = pixels, else lines */
+        struct { float dx, dy; bool precise; } wheel;       /* + = right / up; precise = pixels (touchpads), else notches */
         struct { int key; bool down, repeat; int mods; } key;   /* key: a BareKey */
         struct { float w, h, scale; } size;
         bool focused;
@@ -263,6 +266,12 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *event);
 /* The mouse cursor the UI asks for (the hovered element's .cursor), valid
  * after bare_ctx_end. */
 BareCursor bare_ctx_cursor(const BareContext *ctx);
+
+/* When nothing is animating the caller may sleep until input arrives, but no
+ * later than this time (on the clock passed to bare_ctx_begin): something is
+ * timed to change then (a scrollbar fading out). Negative: no such time.
+ * Valid after bare_ctx_end. */
+double bare_ctx_wake_time(const BareContext *ctx);
 
 void bare_ctx_set_clear(BareContext *ctx, BareColor color);
 

@@ -160,6 +160,7 @@ void bare__tree_end(BareContext *ctx) {
         BareElem *e = &ctx->elems[ctx->stack[ctx->depth - 1]];
         bare__log(ctx, "container opened at %s:%d was never closed (break/return inside its block?)",
                   e->file, e->line);
+        bare__scroll_close(ctx, ctx->stack[ctx->depth - 1]);
         ctx->depth--;
     }
     ctx->depth = 0;
@@ -255,7 +256,10 @@ int bare_close_(void) {
     BareContext *ctx = bare_ctx_current();
     if (!ctx || !ctx->in_frame) return 0;
     if (ctx->overflow) { ctx->overflow--; return 0; }
-    if (ctx->depth > 1) ctx->depth--;
+    if (ctx->depth > 1) {
+        bare__scroll_close(ctx, ctx->stack[ctx->depth - 1]);   /* its scrollbars go on top of its children */
+        ctx->depth--;
+    }
     return 0;
 }
 

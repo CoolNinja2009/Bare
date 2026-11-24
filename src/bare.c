@@ -90,6 +90,11 @@ bool bare_frame(void) {
     /* Sleep until something happens unless a redraw is already needed. In
      * capture mode never block: there's no user to wake us. */
     double wait = (app.dirty || app.capture_frames) ? 0.0 : -1.0;
+    double wake = bare_ctx_wake_time(app.ctx);   /* something timed, like a scrollbar fading out */
+    if (wait < 0 && wake >= 0) {
+        double now = app.platform.time(app.platform.self) - app.start;
+        wait = wake > now ? wake - now : 0.0;
+    }
     int n = app.platform.poll_events(app.platform.self, app.events, MAX_EVENTS, wait);
     for (int i = 0; i < n; i++) apply(&app.events[i]);
     if (app.quit) return false;

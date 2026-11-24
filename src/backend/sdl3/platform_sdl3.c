@@ -151,10 +151,16 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         out->kind = BARE_EVENT_WHEEL;
         {
             float flip = e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
-            out->as.wheel.dx = e->wheel.x * flip;
-            out->as.wheel.dy = e->wheel.y * flip;
+            float x = e->wheel.x * flip, y = e->wheel.y * flip;
+            /* A mouse wheel moves in whole notches; touchpads (and free-spinning
+             * wheels) report fractions of one, many times a second. Those are
+             * followed directly instead of glided. */
+            bool fine = x != SDL_floorf(x) || y != SDL_floorf(y);
+            float unit = fine ? BARE_WHEEL_NOTCH : 1.0f;
+            out->as.wheel.dx = x * unit;
+            out->as.wheel.dy = y * unit;
+            out->as.wheel.precise = fine;
         }
-        out->as.wheel.precise = false;
         return true;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:

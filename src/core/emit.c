@@ -128,39 +128,119 @@ static void emit_glass(BareContext *ctx, int index, BareRect r, int *last_glass_
     *last_glass_parent = e->parent;
 }
 
+static BareRect intersect(BareRect a, BareRect b) {
+    float x0 = fmaxf(a.x, b.x), y0 = fmaxf(a.y, b.y);
+    float x1 = fminf(a.x + a.w, b.x + b.w), y1 = fminf(a.y + a.h, b.y + b.h);
+    BareRect r = { x0, y0, fmaxf(x1 - x0, 0.0f), fmaxf(y1 - y0, 0.0f) };
+    return r;
+}
+
+static bool overlaps(BareRect a, BareRect b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/* Where an element can draw: its rect grown by its shadow (physical pixels). */
+static BareRect ink_bounds(const BareElem *e, BareRect r, float s) {
+    const BareShadow *sh = &e->box.shadow;
+    if (sh->color.a == 0) return r;
+    float g = (BARE__MAX(sh->blur, 0.0f) * 3 + BARE__MAX(sh->spread, 0.0f) +
+               BARE__MAX(fabsf(sh->x), fabsf(sh->y))) * s * e->vscale;
+    BareRect o = { r.x - g, r.y - g, r.w + 2 * g, r.h + 2 * g };
+    return o;
+}
+
+static void push_clip(BareContext *ctx, BareRect r) {
+    BareDrawCmd *cmd = push_cmd(ctx);
+    if (!cmd) return;
+    cmd->kind = BARE_CMD_CLIP_PUSH;
+    cmd->as.clip.rect = r;
+}
+
+static void pop_clip(BareContext *ctx) {
+    BareDrawCmd *cmd = push_cmd(ctx);
+    if (cmd) cmd->kind = BARE_CMD_CLIP_POP;
+}
+
+/* A box's own commands: glass, background, image, border. */
+static void emit_box(BareContext *ctx, int i, BareRect r, int *last_glass_cmd, int *last_glass_parent) {
+    const BareElem *e = &ctx->elems[i];
+    bool image = e->box.image && bare__image(ctx, e->box.image);
+    if (e->glass) {
+        emit_glass(ctx, i, r, last_glass_cmd, last_glass_parent);
+        emit_rect(ctx, e, r, false, true, !image);   /* frost colour and border on top of the glass */
+    } else {
+        emit_rect(ctx, e, r, true, true, !image);
+    }
+    if (image) {   /* over the background, under the border */
+        emit_image(ctx, e, r);
+        emit_rect(ctx, e, r, false, false, true);
+    }
+}
+
 void bare__emit(BareContext *ctx) {
     ctx->cmd_count = 0;
     bare__text_begin_emit(ctx);
     int last_glass_cmd = -1, last_glass_parent = -2;
     float s = ctx->scale;
+    int n = ctx->elem_count;
     /* Text colour, inherited down the tree (white unless a .text_color says otherwise). */
-    BareColor *ink = bare__arena_alloc(&ctx->frame, sizeof *ink * (size_t)(ctx->elem_count + 1), 16);
-    for (int i = 0; i < ctx->elem_count; i++) {
+    BareColor *ink = bare__arena_alloc(&ctx->frame, sizeof *ink * (size_t)(n + 1), 16);
+    /* Clips: a clipping box's clip stays pushed until its last descendant
+     * (pre-order: the subtree of i is i..end[i]). Each pushed rect is already
+     * intersected with the enclosing one, in whole physical pixels. */
+    int *end = bare__arena_alloc(&ctx->frame, sizeof *end * (size_t)(n + 1), 16);
+    int *open_end = bare__arena_alloc(&ctx->frame, sizeof *open_end * (BARE__MAX_DEPTH + 2), 16);
+    BareRect *open_rect = bare__arena_alloc(&ctx->frame, sizeof *open_rect * (BARE__MAX_DEPTH + 2), 16);
+    if (!end || !open_end || !open_rect) {
+        bare__log(ctx, "out of memory emitting draw commands");
+        return;
+    }
+    for (int i = 0; i < n; i++) end[i] = i;
+    for (int i = n - 1; i > 0; i--) {
+        int p = ctx->elems[i].parent;
+        if (p >= 0 && end[i] > end[p]) end[p] = end[i];
+    }
+    int depth = 0;
+    open_rect[0] = (BareRect){ -1e30f, -1e30f, 2e30f, 2e30f };
+
+    for (int i = 0; i < n; i++) {
         const BareElem *e = &ctx->elems[i];
+        while (depth > 0 && open_end[depth] < i) { pop_clip(ctx); depth--; }
         if (ink) {
             BareColor up = e->parent >= 0 ? ink[e->parent] : BARE_WHITE;
             ink[i] = e->box.text_color.a ? e->box.text_color : up;
         }
-        if (e->opacity <= 0) continue;
+        if (e->opacity <= 0) continue;   /* its children are transparent too */
         BareRect r = place(e, s);
-        if (r.w <= 0 || r.h <= 0) continue;
-        if (e->text) {
+        bool clips = (e->box.clip || e->box.scroll) && end[i] > i;
+        BareRect clip = open_rect[depth];
+        if (clips) {
+            BareRect c = bare__clip_rect(e);
+            float x0 = roundf(c.x * s), y0 = roundf(c.y * s);
+            float x1 = roundf((c.x + c.w) * s), y1 = roundf((c.y + c.h) * s);
+            clip = intersect(open_rect[depth], (BareRect){ x0, y0, x1 - x0, y1 - y0 });
+        }
+        bool seen = r.w > 0 && r.h > 0 && overlaps(ink_bounds(e, r, s), open_rect[depth]);
+        if (seen && e->text) {
             bool snap = e->vscale == 1.0f && !e->moving;
             bare__text_emit(ctx, e->text, r, e->vscale, snap, color_f(ink ? ink[i] : BARE_WHITE, e->opacity));
             continue;
         }
-        bool image = e->box.image && bare__image(ctx, e->box.image);
-        if (e->glass) {
-            emit_glass(ctx, i, r, &last_glass_cmd, &last_glass_parent);
-            emit_rect(ctx, e, r, false, true, !image);   /* frost colour and border on top of the glass */
-        } else {
-            emit_rect(ctx, e, r, true, true, !image);
-        }
-        if (image) {   /* over the background, under the border */
-            emit_image(ctx, e, r);
-            emit_rect(ctx, e, r, false, false, true);
+        if (seen) emit_box(ctx, i, r, &last_glass_cmd, &last_glass_parent);
+        if (clips) {
+            if (clip.w <= 0 || clip.h <= 0) {   /* nothing inside can show */
+                i = end[i];
+                continue;
+            }
+            if (depth + 1 < BARE__MAX_DEPTH + 2) {
+                push_clip(ctx, clip);
+                depth++;
+                open_end[depth] = end[i];
+                open_rect[depth] = clip;
+            }
         }
     }
+    while (depth > 0) { pop_clip(ctx); depth--; }
 
     BareDrawList *l = &ctx->list;
     bare__text_end_frame(ctx);   /* the atlas upload */

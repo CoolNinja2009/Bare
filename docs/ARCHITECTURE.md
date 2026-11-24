@@ -44,6 +44,7 @@ src/
     anim.c             animation channels per node, retargeting, idle detection
     input.c            event queue -> mouse/keys state, press/click/scroll bookkeeping
     hit.c              hit list and hit testing (clip + paint order)
+    scroll.c           scroll boxes: wheel routing and hand-off, the offset spring, scrollbars, bare_visible
     text.c             UTF-8, line breaking, glyph cache and atlas (font backend below)
     font_stb.c         stb_truetype implementation of the font backend
     image.c            image handles and pending texture uploads (decoding via stb_image)
@@ -87,9 +88,10 @@ bare_frame() #N
  │    7. render        renderer->render(draw list): ops first (backend)
  │    8. evict         drop nodes not declared in frame N-1
  └─ begin frame N
-      9. wait/poll     platform->poll_events; block if idle (see §11)
+      9. wait/poll     platform->poll_events; block if idle, at most until the wake time (see §11)
      10. input         apply events; hit-test the mouse against the frame N-1 hit list;
-                       update hovered / pressed / clicked / scroll per node
+                       update hovered / pressed / clicked / scroll targets per node;
+                       step scroll offsets toward their targets (so the app sees this frame's)
      11. reset         frame arena; open the root element (window size, column)
      12. return true   ... the app declares UI; each element reads its BareState now
 ```
@@ -130,7 +132,8 @@ typedef struct BareNode {
     BareRect  layout_rect;       /* last target rect (window coordinates) */
     BareRect  visual_rect;       /* last drawn rect (after animation and scale) */
     uint32_t  flags;             /* hovered, pressed, clicked, right_clicked, ... */
-    BareVec2  scroll, scroll_target;
+    BareVec2  scroll, scroll_to, scroll_v;   /* drawn offset, target, spring velocity (scroll.c) */
+    BareVec2  content, view;                 /* last layout: content and box size, for input between frames */
     uint32_t  anim;              /* index + 1 of its animation channels (§7); 0 = never animated */
 } BareNode;
 ```
@@ -195,7 +198,7 @@ Passes (each a straight loop over the pre-order array):
 | 3 | top-down | **wrap text** at the final widths → text heights |
 | 4 | bottom-up | **fit heights** (as pass 1, with the axes swapped) |
 | 5 | top-down | **resolve heights** (as pass 2) |
-| 6 | top-down | **position**: padding, `.justify` along the main axis (start/center/end/space-*), `.align` across, gaps, minus the scroll offset of scroll containers |
+| 6 | top-down | **position**: padding, `.justify` along the main axis (start/center/end/space-*), `.align` across, gaps; scroll boxes clamp their offset to the content and place their scrollbars |
 
 Widths are fully resolved before heights because text height depends on width. Rects are in logical pixels, window
 coordinates; snapping to physical pixels happens in `emit.c`.
@@ -221,7 +224,7 @@ which never animate, cost nothing):
 | layout | x, y (relative to the parent), width, height | `.animate_layout`, else `.animate` |
 | look | background rgba, border rgba, text rgba, shadow rgba (0..255), border width, radius, opacity, scale, offset x/y, shadow x/y/blur/spread | `.animate` |
 | glass | amount (1 = glass, 0 = none), refraction, depth, blur, dispersion, shine, zoom, light, tint rgba | `.animate` |
-| scroll | scroll x/y | built-in smooth spring (M6) |
+| scroll | scroll x/y | built-in critically damped spring (`scroll.c`, stepped at frame begin, not a channel set) |
 
 `merge` doesn't animate. Positions animate relative to the parent: the target is the element's layout
 position minus its parent's, and the drawn position is the parent's *drawn* position plus the channel. So when a parent
@@ -311,8 +314,34 @@ press; dragging off and back on still clicks, dragging off and releasing doesn't
 elements before reacting to it) and when the element under a still mouse changed (layout moved), so hover is never
 stale while idle.
 
-**Wheel.** Goes to the nearest scroll-container ancestor of what's under the mouse; its node's scroll offset moves (40
-px per notch). M6 adds clamping to the content, hand-off between nested scrollers at their ends, and the spring.
+**Wheel (`scroll.c`).** Each axis goes to the innermost scroll box in the chain under the mouse that can still move
+that way; one at its end passes it on (browsers' scroll chaining). Shift turns a vertical wheel sideways. A notch is
+100 px (`BARE_WHEEL_NOTCH`, as Chrome on Windows) and moves only the node's target: the drawn offset follows on a
+critically damped spring (response 0.15 s), stepped at the *start* of the next frame so `BareState.scroll`,
+`bare_visible` and layout all see the value that frame draws. `precise` deltas (touchpads: SDL reports fractions of a
+notch) move target and offset together, so the content follows the fingers. Targets are clamped to
+`content - view` from the last layout; layout clamps again when the content shrinks.
+
+**Scroll offsets are a transform, not layout.** Layout positions a scroll box's children unscrolled;
+`bare__transforms` translates them by the offset rounded to whole physical pixels (so scrolled text stays sharp and
+never shimmers). Children with `.animate_layout` therefore don't chase the scroll on their springs.
+
+**Scroll boxes in layout.** Like CSS, a box that clips or scrolls has a min-content size of just its padding, so a
+column can squeeze it to the space left and it scrolls the rest; along a scroll axis its children never shrink.
+
+**Scrollbars.** When a scroll box closes, Bare appends for each overflowing axis a *rail* (the thumb's hit area,
+14 px thick) holding a *bar* (what shows). The rail is linked to the box as its parent but left out of the sibling
+chain, so the flex passes never see it; layout sizes it as the thumb and pins it to the box's far edge, and transforms
+don't scroll it. Being real elements, they are drawn and hit on top of the content and get hover and press for free.
+The bar fades and widens through `.animate`. It shows for a second after the box scrolls or the mouse moves over it
+(the core asks for a frame at that time: `bare_ctx_wake_time`), and while hovered or dragged. Pressing a rail grabs
+the thumb; mouse moves then set offset and target directly.
+
+**Long lists (`bare_visible`).** A loop macro: it reads the box's offset and last view, declares items
+`first..last` (one spare at each end) and sets `lead` / `tail` on the box: the length of the undeclared items before
+and after the run, which layout adds to the fit size, the free space and the position cursor. So positions and the
+content size equal those of the full list, and the scrollbar is right. Cost while scrolling 10,000 rows: ~14 us of core
+time per frame (vs ~8.5 ms declaring them all).
 
 **Cursor.** The innermost hovered element's `.cursor` (`bare_ctx_cursor`), sent to the platform after each frame.
 
@@ -375,7 +404,11 @@ typedef struct BareDrawList {
 ```
 
 Emission walks the tree in pre-order: for each element, one `RECT` (background, border and shadow together, skipped if
-all invisible), `IMAGE` if it has one, `CLIP_PUSH` if it clips, then its children, then `CLIP_POP`. Text elements emit
+all invisible), `IMAGE` if it has one, `CLIP_PUSH` if it clips, then its children, then `CLIP_POP`. A clip is the box
+inside its border (CSS clips to the padding box), rounded to whole physical pixels and intersected with the enclosing
+clip; it is popped after the box's last descendant (pre-order: the subtree of `i` is `i..end[i]`). An element whose
+rect, grown by its shadow, is entirely outside the current clip emits nothing (its children are still visited: they
+can overflow it); a clip with no area skips its whole subtree. Text elements emit
 one `TEXT` per run. A glass element emits `GLASS` (which draws its shadow) and then a `RECT` for any `.color` /
 `.border` on top; consecutive glass siblings with `.merge` share one `GLASS` command so they melt together.
 
@@ -501,6 +534,9 @@ never needs a shader compiler; the `bare_shaders` CMake target regenerates them 
 
 - When no channel is animating, no scroll is settling and `bare_continuous(false)` (default), `bare_frame` blocks in
   `poll_events` until input arrives or `bare_wake()` is called from another thread. Idle apps use no CPU and no GPU.
+- Things timed to change while idle (a scrollbar fading a second after scrolling) set the context's wake time
+  (`bare_ctx_wake_time`); `bare_frame` waits no longer than that, so one frame starts the change instead of drawing
+  frames until it's due.
 - `bare_time()` and `bare_dt()` come from the platform's monotonic clock. Animations use the clamped `dt`.
 - Bare is single-threaded: call it from the thread that created the window. Only `bare_wake` is thread-safe.
 

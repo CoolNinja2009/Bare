@@ -10,8 +10,6 @@
 #include "internal.h"
 #include <string.h>
 
-#define LINE_PIXELS 40.0f   /* one wheel notch */
-
 static int press_slot(int button) {
     return button == BARE_MOUSE_LEFT ? BARE__PRESS_LEFT : button == BARE_MOUSE_RIGHT ? BARE__PRESS_RIGHT : -1;
 }
@@ -28,6 +26,7 @@ static void release_all(BareContext *ctx) {
         ctx->held[s] = false;
         ctx->press[s].count = 0;
     }
+    ctx->drag_id = 0;
 }
 
 static void button(BareContext *ctx, int b, bool down, BareVec2 p) {
@@ -37,9 +36,13 @@ static void button(BareContext *ctx, int b, bool down, BareVec2 p) {
     if (s < 0) return;
     if (down) {
         ctx->held[s] = true;
-        chain_at(ctx, p, &ctx->press[s]);
+        int i = bare__hit_find(ctx, p);
+        if (i >= 0) bare__hit_chain(ctx, i, &ctx->press[s]);
+        else ctx->press[s].count = 0;
+        if (i >= 0 && s == BARE__PRESS_LEFT && ctx->hits[i].bar) bare__scroll_press(ctx, i, p);
         return;
     }
+    if (s == BARE__PRESS_LEFT) ctx->drag_id = 0;
     if (!ctx->held[s]) return;   /* the press started outside the window */
     BareChain now;
     chain_at(ctx, p, &now);
@@ -53,28 +56,14 @@ static void button(BareContext *ctx, int b, bool down, BareVec2 p) {
     ctx->press[s].count = 0;
 }
 
-/* The wheel scrolls the nearest scrollable ancestor of what's under the mouse.
- * M6 adds clamping to the content, hand-off between nested scrollers and
- * smoothing; until then offsets only stop at 0. */
-static void wheel(BareContext *ctx, float dx, float dy, bool precise) {
-    if (!ctx->mouse_in) return;
-    float k = precise ? 1.0f : LINE_PIXELS;
-    for (int i = bare__hit_find(ctx, ctx->mouse); i >= 0; i = ctx->hits[i].parent) {
-        const BareHit *h = &ctx->hits[i];
-        if (!h->scroll || h->node < 0) continue;
-        BareNode *n = &ctx->store.nodes[h->node];
-        if (h->scroll != BARE_SCROLL_Y) n->scroll.x = BARE__MAX(n->scroll.x + dx * k, 0.0f);
-        if (h->scroll != BARE_SCROLL_X) n->scroll.y = BARE__MAX(n->scroll.y - dy * k, 0.0f);
-        return;
-    }
-}
-
 void bare_ctx_event(BareContext *ctx, const BareEvent *e) {
     if (!ctx || !e) return;
     switch (e->kind) {
     case BARE_EVENT_MOUSE_MOVE:
         ctx->mouse = (BareVec2){ e->as.mouse.x, e->as.mouse.y };
         ctx->mouse_in = true;
+        ctx->mouse_moved = true;
+        if (ctx->drag_id && ctx->held[BARE__PRESS_LEFT]) bare__scroll_drag(ctx, ctx->mouse);
         break;
     case BARE_EVENT_MOUSE_LEAVE:
         ctx->mouse_in = false;
@@ -83,7 +72,7 @@ void bare_ctx_event(BareContext *ctx, const BareEvent *e) {
         button(ctx, e->as.button.button, e->as.button.down, (BareVec2){ e->as.button.x, e->as.button.y });
         break;
     case BARE_EVENT_WHEEL:
-        wheel(ctx, e->as.wheel.dx, e->as.wheel.dy, e->as.wheel.precise);
+        bare__scroll_wheel(ctx, e->as.wheel.dx, e->as.wheel.dy, e->as.wheel.precise);   /* scroll.c */
         break;
     case BARE_EVENT_KEY: {
         int k = e->as.key.key;
@@ -119,6 +108,7 @@ bool bare__input_end(BareContext *ctx) {
         if (i >= 0) top = ctx->hits[i].id;
     }
     if (top != ctx->hover_top) again = true;
+    ctx->mouse_moved = false;
     for (int s = 0; s < BARE__PRESS_COUNT; s++) {
         if (ctx->clicked[s].count) again = true;
         ctx->clicked[s].count = 0;

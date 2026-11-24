@@ -12,6 +12,15 @@ BareRect bare__visual_rect(const BareElem *e) {
     return r;
 }
 
+/* What a clipping box clips its children to: inside its border, as CSS
+ * clips overflow to the padding box. Visual, logical pixels. */
+BareRect bare__clip_rect(const BareElem *e) {
+    BareRect r = bare__visual_rect(e);
+    float b = BARE__MIN(e->box.border * e->vscale, BARE__MIN(r.w, r.h) * 0.5f);
+    r.x += b; r.y += b; r.w -= 2 * b; r.h -= 2 * b;
+    return r;
+}
+
 static BareRect intersect(BareRect a, BareRect b) {
     float x0 = fmaxf(a.x, b.x), y0 = fmaxf(a.y, b.y);
     float x1 = fminf(a.x + a.w, b.x + b.w), y1 = fminf(a.y + a.h, b.y + b.h);
@@ -36,13 +45,14 @@ void bare__hits_build(BareContext *ctx) {
         h->radius = BARE__MIN(e->box.radius * e->vscale, BARE__MIN(h->rect.w, h->rect.h) * 0.5f);
         h->passthrough = e->box.passthrough;
         h->scroll = (uint8_t)e->box.scroll;
-        /* Children of a clipping or scrolling box can't be hit outside it. */
+        h->bar = e->overlay;
+        /* Children of a clipping or scrolling box can't be hit outside it (inside its border). */
         if (e->parent < 0) {
             h->clip = everything;
         } else {
             const BareHit *p = &ctx->hits[e->parent];
             const BareElem *pe = &ctx->elems[e->parent];
-            h->clip = (pe->box.clip || pe->box.scroll) ? intersect(p->clip, p->rect) : p->clip;
+            h->clip = (pe->box.clip || pe->box.scroll) ? intersect(p->clip, bare__clip_rect(pe)) : p->clip;
         }
     }
     ctx->hit_count = ctx->elem_count;

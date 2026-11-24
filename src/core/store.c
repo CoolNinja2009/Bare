@@ -124,6 +124,7 @@ int bare__store_get(BareContext *ctx, BareId id, bool *created) {
     memset(n, 0, sizeof *n);
     n->id = id;
     n->next_free = -1;
+    n->scroll_seen = -1e9;   /* never scrolled: no scrollbar showing */
 
     uint32_t mask = (uint32_t)s->cap - 1;
     uint32_t i = mix(id) & mask;

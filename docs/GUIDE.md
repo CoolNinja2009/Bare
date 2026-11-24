@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M5: text and images) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M6: clipping and scrolling) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -295,6 +295,43 @@ bare_box(.id = BARE_ID("save"), ...);                       /* a one-off name */
 
 Using one ID twice in a frame is a mistake; Bare logs it with both file:line locations and keeps going.
 
+### Scrolling and clipping
+
+`.clip = true` hides whatever overflows a box (CSS `overflow: hidden`); `.scroll` makes it scroll
+(`overflow: auto`). Scrolling clips too.
+
+```c
+bare_column(.height = BARE_GROW, .gap = 8, .scroll = BARE_SCROLL_Y) {   /* or BARE_SCROLL_X, BARE_SCROLL_BOTH */
+    for (int i = 0; i < n; i++) message(&msgs[i]);
+}
+```
+
+- The wheel scrolls the innermost scroll box under the mouse that can still move that way; one at its end passes the
+  wheel to the next one out. A mouse wheel glides (100 px a notch), a touchpad follows your fingers, Shift + wheel
+  scrolls sideways.
+- A thin scrollbar appears while scrolling or when the mouse moves over the box, fades a second later, widens under
+  the mouse and can be dragged.
+- A box that clips or scrolls is happy to be smaller than its content, as in CSS: give it `BARE_GROW` (or let a column
+  squeeze it) and it takes the space there is and scrolls the rest. Children of a scroll box keep their size along the
+  scroll direction instead of shrinking.
+- `bare_this().scroll` (inside the box) is how far it's scrolled this frame.
+- Clips are rectangles: a box with `.radius` doesn't round its children's corners yet.
+
+**Long lists.** Declaring 10,000 rows every frame costs milliseconds; `bare_visible` declares only the ones on screen
+and keeps room for the rest, so the scrollbar and scrolling behave as if they were all there. Items must all be the same
+length along the box's direction (the box's `.gap` is added for you):
+
+```c
+bare_column(.height = BARE_GROW, .scroll = BARE_SCROLL_Y) {
+    bare_visible(i, 10000, 44) {                       /* items 44 px tall */
+        bare_row(.id = BARE_IDI("row", i), .height = 44) { bare_textf("Row %d", i + 1); }
+    }
+}
+```
+
+It's a loop: one element per item, no `break`. Headers and footers can go before and after it in the same box.
+`examples/scroll.c` has a 10,000-row list next to a page of sideways-scrolling strips.
+
 ## 10. Clicks, hover and keys
 
 Every element call returns a `BareState`: what happened to it. There are no callbacks or event listeners. You ask:
@@ -557,7 +594,8 @@ and `bench/` measures it against the same simulation running in Edge.
 | `white-space: nowrap` | `.nowrap = true` |
 | `@font-face` | `bare_font_load("x.ttf")`, then `.font = f` |
 | `<img src="a.png">`, `border-radius: 50%` | `.image = bare_image_load("a.png")`, `.radius = size / 2` |
-| `overflow: auto` | `.scroll = ...` *(M6)* |
+| `overflow: hidden` / `overflow: auto` | `.clip = true` / `.scroll = BARE_SCROLL_Y` |
+| virtual list (react-window) | `bare_visible(i, count, item_size) { ... }` |
 | `class="card"` | `.style = &card` *(M7)* |
 | `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
 
@@ -580,6 +618,6 @@ and `bench/` measures it against the same simulation running in Edge.
 
 ## 16. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): scrolling (M6), styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `glass_motion/` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `glass_motion/` and `fluid/` today.

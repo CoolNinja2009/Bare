@@ -1,7 +1,7 @@
 /*
  * bare.h: the whole public API of Bare, a small native UI framework in C11.
  *
- * Parts marked (M6)...(M9) aren't implemented yet; see docs/ROADMAP.md.
+ * Parts marked (M7)...(M9) aren't implemented yet; see docs/ROADMAP.md.
  *
  * The simplest program:
  *
@@ -135,6 +135,11 @@ typedef enum BareAlign {
     BARE_SPACE_EVENLY
 } BareAlign;
 
+/* .scroll: which way a box scrolls content that overflows it (CSS overflow:
+ * auto). The wheel scrolls the innermost scroll box under the mouse that can
+ * still move that way (Shift turns the wheel sideways); a mouse wheel glides,
+ * a touchpad follows the fingers. A thin scrollbar shows while scrolling or
+ * while the mouse moves over the box, and can be dragged. */
 typedef enum BareScroll {
     BARE_SCROLL_NONE = 0,
     BARE_SCROLL_X,
@@ -363,8 +368,8 @@ typedef struct BareBox {
     BareLook hover, press;      /* looks while hovered / pressed */
     BareCursor cursor;
     bool passthrough;           /* the mouse goes through it (CSS pointer-events: none); children still get it */
-    bool clip;                  /* (M6) clip children to the box */
-    BareScroll scroll;          /* (M6) scroll overflowing children; implies .clip */
+    bool clip;                  /* clip children to the box, inside its border (CSS overflow: hidden) */
+    BareScroll scroll;          /* scroll overflowing children (see BareScroll); implies .clip */
 
     /* animation */
     BareAnim animate;           /* how every animatable property moves to its new value (default: instantly) */
@@ -389,7 +394,7 @@ typedef struct BareState {
     bool clicked;               /* pressed and released over it (this frame) */
     bool right_clicked;
     BareRect rect;              /* where it was last frame, logical pixels */
-    BareVec2 scroll;            /* (M6) current scroll offset */
+    BareVec2 scroll;            /* scroll boxes: how far the content is scrolled this frame */
 } BareState;
 
 /* Leaf box. Returns its state. */
@@ -408,6 +413,21 @@ BareState bare_this(void);
  * The default font is Inter (Latin); pass .font = bare_font_load(...) for others. */
 #define bare_text(str, ...)  bare_text_((str), &(BareTextStyle){ __VA_ARGS__ }, __FILE__, __LINE__)
 #define bare_textf(...)      bare_textf_(__FILE__, __LINE__, __VA_ARGS__)   /* printf-style, default style */
+
+/* Long lists: inside a scroll box, declare only the items on screen. Items
+ * are `size` pixels long along the box's direction (its .gap is added); Bare
+ * keeps room for the rest, so scrolling and the scrollbar behave as if all
+ * `count` were there. One element per item, and no `break` out of the loop.
+ *
+ *     bare_column(.height = BARE_GROW, .scroll = BARE_SCROLL_Y) {
+ *         bare_visible(i, 10000, 32) {
+ *             bare_row(.id = BARE_IDI("row", i), .height = 32) { bare_textf("Row %d", i); }
+ *         }
+ *     }
+ *
+ * In a box that doesn't scroll along its direction every item is declared. */
+#define bare_visible(i, count, size) \
+    for (int i = bare_visible_((count), (float)(size), __FILE__, __LINE__); bare_visible_more_(i); i++)
 
 /* (M7) Reusable styles are plain BareBox values:
  *     static const BareBox card = { .radius = 16, .padding = 20, .color = {36, 38, 46, 255} };
@@ -506,6 +526,8 @@ void      bare_pass_(const BarePass *pass, const char *file, int line);
 int       bare_open_(const BareBox *box, const char *file, int line);   /* returns 1 */
 int       bare_close_(void);                                            /* returns 0 */
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line);
+int       bare_visible_(int count, float size, const char *file, int line);   /* the first item on screen */
+int       bare_visible_more_(int i);
 #if defined(__GNUC__)
 __attribute__((format(printf, 3, 4)))
 #endif
