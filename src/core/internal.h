@@ -336,6 +336,10 @@ struct BareContext {
     uint64_t      frame_index;
     bool          in_frame;
     BareColor     clear;
+    bool          clear_set;        /* the app chose a background; else the theme's */
+    BareTheme     theme;            /* the current theme (style.c) */
+    const void   *style_warned[8];  /* broken style chains already reported */
+    int           style_warned_count;
 
     BareLogFn     log;
     void         *log_user;
@@ -346,6 +350,13 @@ void bare__log(BareContext *ctx, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)))
 #endif
     ;
+
+/* style.c */
+void bare__style_box(BareContext *ctx, const BareBox *box, BareBox *out, const char *file, int line);
+void bare__style_text(BareContext *ctx, const BareTextStyle *st, BareTextStyle *out, const char *file, int line);
+void bare__resolve_box(BareBox *b);         /* defaults for fields still 0; BARE_ZERO -> 0 */
+bool bare__resolve_glass(BareGlass *g);     /* true when the box has glass */
+void bare__apply_look(BareBox *b, const BareLook *l);
 
 /* tree.c */
 int  bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int line);

@@ -120,7 +120,10 @@ bool bare__input_end(BareContext *ctx) {
     return again;
 }
 
-BareCursor bare_ctx_cursor(const BareContext *ctx) { return ctx ? ctx->cursor : BARE_CURSOR_DEFAULT; }
+BareCursor bare_ctx_cursor(const BareContext *ctx) {
+    if (!ctx || ctx->cursor == BARE_CURSOR_ARROW) return BARE_CURSOR_DEFAULT;   /* platforms know the arrow as 0 */
+    return ctx->cursor;
+}
 
 /* ---- public queries on the current context ------------------------------ */
 

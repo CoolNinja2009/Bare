@@ -38,7 +38,8 @@ BareContext *bare_ctx_create(const BareConfig *config) {
     ctx->store.free_head = -1;
     ctx->anim_free = -1;
     ctx->font_backend = fonts;
-    ctx->clear = BARE_RGB(24, 24, 28);
+    ctx->theme = *bare_theme_dark();
+    ctx->clear = ctx->theme.background;
     ctx->scale = 1.0f;
     ctx->log = log_stderr;
     ctx->wake_at = -1;
@@ -63,7 +64,10 @@ void bare_ctx_destroy(BareContext *ctx) {
 void bare_ctx_make_current(BareContext *ctx) { current = ctx; }
 BareContext *bare_ctx_current(void) { return current; }
 
-void bare_ctx_set_clear(BareContext *ctx, BareColor color) { ctx->clear = color; }
+void bare_ctx_set_clear(BareContext *ctx, BareColor color) {
+    ctx->clear = color;
+    ctx->clear_set = true;
+}
 
 void bare_ctx_set_log(BareContext *ctx, BareLogFn fn, void *user) {
     ctx->log = fn ? fn : log_stderr;

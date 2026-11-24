@@ -143,13 +143,13 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 ## Current status
 
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4
-(animation), M5 (text and images) and M6 (clipping and scrolling) done.** Next: M7 (style system); the optimizations
-below can be interleaved.
+(animation), M5 (text and images), M6 (clipping and scrolling) and M7 (style system) done.** Next: M7.5 (BareType:
+focus and text editing, before M8 so widgets are designed with it); the optimizations below can be interleaved.
 
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
   Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-  `scroll.c`, `glass_motion/`, `fluid/`. 9 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
+  `scroll.c`, `styles.c`, `glass_motion/`, `fluid/`. 10 test programs pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
   min/max; shrink down to min-content (fixed and percent never shrink); padding, gap, all align and justify modes.
@@ -210,7 +210,14 @@ below can be interleaved.
   Vulkan and GCC = MSVC pixel for pixel. Fluid bench after M6: 8.8-9.3% of a core vs 7.6-8.0% for the previous
   commit measured the same hour; the core frame is ~14 us, so this is likely noise but wasn't confirmed (the user
   asked to stop running the bench). Not verified by hand: a real mouse wheel and touchpad.
-- Stand-ins: `layout.c`, `cards.c` and `buttons.c` still use grey bars where labels would go.
+- Styles and themes (M7, `src/core/style.c`): `.style` chains (base up, then the element, defaults, looks), field
+  tables merged one by one; padding/pad, shadow, offset, glass and the animations taken whole; hover/press merged
+  field by field; cycles cut and logged once. Deliberate nothings `BARE_CLEAR`, `BARE_START` (alignment renumbered,
+  0 = default), `BARE_CURSOR_ARROW`, `BARE_INSTANT`. `BareTextStyle.style` / `.animate`. `BareTheme` dark (default)
+  and light, copied into the context (`&bare_theme()->card` is stable), theme styles fade on `bare_set_theme`; the
+  theme gives the clear colour (unless `bare_background`) and root text colour. `styles.c` (settings page, theme
+  button) checked by captures in both themes and mid-fade; `cards.c` rewritten with styles and real text.
+- Stand-ins: `layout.c` and `buttons.c` still use grey bars where labels would go.
 - Not verified: hovering `cards.c` in and out quickly with a real mouse (retargeting without jumps is unit-tested
   and the motion was checked in captures); DPI scale above 100%, including text sharpness at 150%/200% (this display
   is 100%; the core's 1.5x/2x maths and glyph sizes are unit-tested); live window resizing on Windows (SDL's modal

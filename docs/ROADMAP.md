@@ -201,7 +201,21 @@ wheel goes to the inner container until it hits its end, then to the outer; scro
 helper computing the visible range) next to a nested horizontal scroller.
 **Done when:** scrolling is smooth with mouse wheel and touchpad; 10,000-item list stays at frame rate.
 
-## [ ] M7: Style system
+## [x] M7: Style system
+
+Done 2026-11-24. Resolution moved to `src/core/style.c`: the `.style` chain is laid from the base up, then the
+element, then defaults, then hover/press looks. Fields are merged one by one from field tables (offsetof), except
+groups taken whole from the most specific place that sets them (padding with pad, shadow, offset, glass, the two
+animations); hover and press merge field by field. Chains go up to 8 deep (more than the one level planned); a
+cycle is cut and logged once with the element's file:line. New deliberate nothings so an element can cancel a
+style: `BARE_CLEAR`, `BARE_START` (alignment renumbered so 0 is "default"), `BARE_CURSOR_ARROW`, `BARE_INSTANT`.
+`BareTextStyle` got `.style` and `.animate`. Themes: `BareTheme` (colours + panel, card, button, primary, row,
+title, heading, body, caption), `bare_theme_dark()` (default) and `bare_theme_light()`; the current theme is copied
+into the context so `&bare_theme()->card` stays valid across `bare_set_theme`, and theme styles animate their looks
+(0.2 s ease-out), so a switch fades. The theme gives the clear colour (unless `bare_background` was called) and the
+root text colour. Tests: `tests/test_style.c` (13). `examples/styles.c` checked by captures in both themes and
+mid-fade; `cards.c` now declares a card in one line instead of five (91 → 84 lines while replacing its grey
+stand-in bars with real text). GCC and MSVC build warning-free; all 10 test programs pass on both.
 
 **Goal:** reusable styles like CSS classes.
 
@@ -213,6 +227,49 @@ helper computing the visible range) next to a nested horizontal scroller.
 non-zero value; hover look on a style applies to elements using it; chained styles; cycle detection.
 **Example:** `examples/styles.c`: one settings page in a light and a dark theme, switched by a button.
 **Done when:** the cards example shrinks noticeably by using styles.
+
+## [ ] M7.5: BareType: keyboard focus and text editing (added by the user, for ScreenPlus)
+
+**Goal:** text fields that feel native on Windows, macOS and Linux: the biggest gap before ScreenPlus (it has
+`textedit.c`). Before M8 so the widget API is designed with editing and focus in it.
+
+- **Focus** (`src/core/focus.c`): click to focus, Tab / Shift+Tab in declaration order, Escape and clicking elsewhere
+  blur it; `.focusable`, `BareState.focused`, `bare_focus(id)`; a theme focus-ring look (`.focus`, like `.hover`);
+  keys go to the focused element first.
+- **Platform text input:** `BARE_EVENT_TEXT` (UTF-8 from SDL3's text input events, so layouts and dead keys work),
+  `start_text_input` / `stop_text_input` on `BarePlatform` while a field is focused; the IME composition string as
+  an event too (shown inline, underlined); the IME window placed at the caret (`SDL_SetTextInputArea`).
+- **Editing** (`src/core/edit.c`): `bare_input(buf, cap, .placeholder, .multiline, .password, .style)` editing the
+  app's buffer in place, returns a state with `.changed` / `.submitted`; caret and selection retained per id;
+  UTF-8-safe insert and delete; move by character, word, line, Home/End, PageUp/Down (multiline); Shift selects;
+  mouse click / drag / double-click word / triple-click line; cut, copy, paste; undo / redo (grouped typing runs);
+  the field scrolls to keep the caret visible (M6 scroll offsets); a blinking caret that uses the wake time, so a
+  focused field idles at 0% CPU.
+- **Text layout hooks** in `text.c`: point to byte offset and byte offset to caret rect (lines, kerning, wrapping),
+  selection rects per line.
+- **Shortcuts per platform:** Ctrl on Windows / Linux, Cmd on macOS (`BARE_KEY_SHORTCUT`), Alt vs Option word jumps,
+  macOS Cmd+arrows for line start / end.
+- **Text macros, full formatting** (the user's request): every text call takes the whole set of named options:
+  `.size`, `.weight` (font family with weights: regular / medium / semibold / bold), `.italic`, `.underline`,
+  `.strike`, `.letter_spacing`, `.line_height`, `.align`, `.nowrap`, `.ellipsis` / `.max_lines`, `.transform`
+  (upper / lower), `.shadow`, `.color`, `.opacity`, `.animate`, `.style` (a `BareTextStyle`, chainable). Rich text:
+  `bare_paragraph(...) { bare_span("Hello ", ...); bare_span("world", .weight = BARE_BOLD); }` wraps spans
+  together as one flow; `bare_textf` keeps printf formatting. Editable fields take the same options.
+- **Text anywhere:** `.position = BARE_ABSOLUTE` with `.x` / `.y` (or `.anchor` to an edge / corner of the parent)
+  takes any element, text included, out of the flex flow: placed freely on the screen or pinned to a widget (a badge
+  on a button, a label over a canvas) while it still inherits the widget's text colour, clip and animation. Plain
+  text calls work inside any widget, so widgets bundle labels without a special API.
+- Deferred: right-to-left and complex scripts (need HarfBuzz), spell check, accessibility of fields.
+
+**Tests (headless, synthetic events):** typed UTF-8 lands at the caret; backspace removes a whole code point; word
+and line movement; Shift selection then typing replaces it; cap respected without splitting a code point; undo /
+redo restore text and caret; click maps to the right offset in wrapped text; double-click selects a word; Tab
+order and blur; keys go to the focused field, not shortcuts underneath; IME composition replaced by the committed
+text; caret blink asks for a wake time, not continuous frames.
+**Example:** `examples/editor.c`: a sign-up form (name, email, password, multi-line bio) and a search field
+filtering a `bare_visible` list, in the theme.
+**Done when:** the form is usable by keyboard alone; typing, selecting and IME (Windows Japanese IME) work by hand
+on Windows; headless tests pass in CI on Windows, Linux and macOS.
 
 ## [ ] M8: Core widgets
 
@@ -310,7 +367,7 @@ needed; **beyond** = something the web can't do as easily.
 | `@font-face` | `bare_font_load("x.ttf")`, `bare_font_from_memory` | done |
 | letter-spacing, decoration, text-shadow, ellipsis | | M10 |
 | complex scripts (Arabic, Indic), emoji | FreeType + HarfBuzz backend | later |
-| `<input>`, `<textarea>`, selection | text input and editing | later (needed for ScreenPlus) |
+| `<input>`, `<textarea>`, selection, focus / Tab | `bare_input(buf, cap, ...)`, `.focusable` (BareType) | M7.5 |
 | **Interaction (the JS part)** | | |
 | `:hover`, `:active` | `.hover = {...}`, `.press = {...}` looks, animated by `.animate` | done |
 | `onclick`, `oncontextmenu`, hover | `if (bare_box(...).clicked)`: the return value; clicks bubble | done |
@@ -319,7 +376,7 @@ needed; **beyond** = something the web can't do as easily.
 | `dblclick`, mouse buttons 4/5, `mousedown` coordinates for drags | | M8 |
 | clipboard | `bare_clipboard()`, `bare_set_clipboard()` | done (API) |
 | state, `useState`, re-render | your C variables; every frame redraws from them | C |
-| CSS classes, variables, themes | `.style = &card`, theme styles | M7 |
+| CSS classes, variables, themes | `.style = &card` (chains), `bare_theme()`, `bare_set_theme` (animated) | done |
 | buttons, checkboxes, sliders | `bare_button` ... | M8 |
 | focus, tab order, drag and drop, touch, IME | | later |
 | accessibility (screen readers) | platform a11y trees | later |
@@ -334,14 +391,14 @@ needed; **beyond** = something the web can't do as easily.
 
 ## Needed for the ScreenPlus port (`Wallpaper+\ScreenPlus`, ~9k lines of Direct2D/DirectWrite UI in `src/ui/`)
 
-To be scheduled once M1–M9 land, after an inventory of ScreenPlus's screens: text input and editing (it has
-`textedit.c`), flex-wrap or grid for the thumbnail library, textures updated every frame (GIF/video previews; canvases exist,
+To be scheduled once M1–M9 land, after an inventory of ScreenPlus's screens (text input and editing for its
+`textedit.c` is M7.5): flex-wrap or grid for the thumbnail library, textures updated every frame (GIF/video previews; canvases exist,
 updating an image's pixels doesn't yet),
 FreeType + HarfBuzz for DirectWrite-level text, Linux (SDL3 already covers it).
 
 ## Later (not scheduled)
 
-Grid layout · text input and editing · keyboard focus and tab navigation · IME · drag and drop · touch gestures ·
+Grid layout · right-to-left and complex-script editing · drag and drop · touch gestures ·
 multi-window (`bare_window_new`, `bare_use`) · floating layers (`.layer`) for popups and tooltips · exit/appear
 transitions · rounded clipping · OKLab colour interpolation · FreeType + HarfBuzz backend · accessibility (platform
 a11y trees) · scripting.

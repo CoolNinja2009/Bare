@@ -1,7 +1,7 @@
 /*
  * bare.h: the whole public API of Bare, a small native UI framework in C11.
  *
- * Parts marked (M7)...(M9) aren't implemented yet; see docs/ROADMAP.md.
+ * Parts marked (M8)...(M9) aren't implemented yet; see docs/ROADMAP.md.
  *
  * The simplest program:
  *
@@ -86,6 +86,9 @@ typedef struct BareEdges { float top, right, bottom, left; } BareEdges;  /* CSS 
 #define BARE_HEX(rgb)          BARE_RGB(((rgb) >> 16) & 255, ((rgb) >> 8) & 255, (rgb) & 255)
 #define BARE_WHITE             BARE_RGB(255, 255, 255)
 #define BARE_BLACK             BARE_RGB(0, 0, 0)
+/* Transparent. Unlike an unset colour (all zero) it counts as set, so it
+ * overrides a style's colour: `.style = &card, .color = BARE_CLEAR`. */
+#define BARE_CLEAR             BARE_RGBA(255, 255, 255, 0)
 
 /* A real zero for fields whose default isn't zero (negative zero, told apart
  * with signbit). Plain 0 in those fields means "default". */
@@ -126,7 +129,8 @@ typedef enum BareDirection {
 } BareDirection;
 
 typedef enum BareAlign {
-    BARE_START = 0,       /* .align and .justify */
+    BARE_ALIGN_DEFAULT = 0,   /* start (0 lets a style's value through) */
+    BARE_START,           /* .align and .justify */
     BARE_CENTER,
     BARE_END,
     BARE_STRETCH,         /* .align only: children fill the cross axis */
@@ -206,7 +210,8 @@ typedef enum BareCursor {
     BARE_CURSOR_MOVE,
     BARE_CURSOR_RESIZE_EW,
     BARE_CURSOR_RESIZE_NS,
-    BARE_CURSOR_NOT_ALLOWED
+    BARE_CURSOR_NOT_ALLOWED,
+    BARE_CURSOR_ARROW     /* the normal arrow, even over a parent or style that set another */
 } BareCursor;
 
 /* ------------------------------------------------------------------------ */
@@ -242,6 +247,10 @@ typedef struct BareAnim {
 
 #define BARE_EASE(secs, curve)  ((BareAnim){ .kind = BARE_ANIM_EASE, .duration = (secs), .bezier = { curve } })
 #define BARE_SPRING(resp, damp) ((BareAnim){ .kind = BARE_ANIM_SPRING, .response = (resp), .damping = (damp) })
+
+/* No animation, overriding a style's (or, as .animate_layout, keeping layout
+ * instant while looks animate). */
+#define BARE_INSTANT        ((BareAnim){ .kind = BARE_ANIM_EASE, .duration = BARE_ZERO })
 
 #define BARE_SPRING_SMOOTH  BARE_SPRING(0.35f, 1.00f)   /* settles without overshoot */
 #define BARE_SPRING_SNAPPY  BARE_SPRING(0.20f, 0.85f)   /* quick, a hint of overshoot */
@@ -334,7 +343,7 @@ typedef struct BarePass {
 
 typedef struct BareBox {
     BareId id;                  /* 0 = automatic (see BareId) */
-    const struct BareBox *style;/* (M7) base style; fields left at 0 come from it */
+    const struct BareBox *style;/* base style: fields left at 0 come from it (see "Styles" below) */
 
     /* size: pixels, BARE_FIT (default), BARE_GROW or BARE_PERCENT(p) */
     float width, height;
@@ -378,12 +387,14 @@ typedef struct BareBox {
 
 typedef struct BareTextStyle {
     BareId id;
+    const struct BareTextStyle *style;   /* base style: fields left at 0 come from it */
     BareFont font;              /* 0 = default */
     float size;                 /* 0 = default 16 */
     BareColor color;            /* alpha 0 = inherited from the nearest .text_color (default white) */
     float line_height;          /* multiple of size; 0 = default 1.3 */
     BareAlign align;            /* BARE_START / CENTER / END within the line box */
     bool nowrap;                /* default: wraps at spaces and after hyphens to fit its width */
+    BareAnim animate;           /* how its colour changes (default: instantly; inherited colour follows the parent) */
 } BareTextStyle;
 
 /* What happened to an element. Results reflect input up to the start of this
@@ -429,10 +440,51 @@ BareState bare_this(void);
 #define bare_visible(i, count, size) \
     for (int i = bare_visible_((count), (float)(size), __FILE__, __LINE__); bare_visible_more_(i); i++)
 
-/* (M7) Reusable styles are plain BareBox values:
- *     static const BareBox card = { .radius = 16, .padding = 20, .color = {36, 38, 46, 255} };
+/* ------------------------------------------------------------------------ */
+/* Styles and themes                                                        */
+/* ------------------------------------------------------------------------ */
+
+/* Reusable styles (CSS classes) are plain BareBox / BareTextStyle values:
+ *
+ *     static const BareBox card = { .radius = 16, .padding = 20, .color = { 36, 38, 46, 255 } };
  *     bare_column(.style = &card, .width = 300) { ... }
+ *
+ * Every field the element leaves at 0 comes from its style; what it sets wins
+ * (BARE_ZERO, BARE_CLEAR, BARE_START, BARE_CURSOR_ARROW and BARE_INSTANT set a
+ * "nothing" value on purpose). A style can have a .style of its own (a chain,
+ * most specific last). Padding (.padding and .pad), .shadow, .offset, .glass and
+ * animations are taken whole; .hover and .press field by field, so a style's
+ * hover colour and an element's hover scale combine. .dir and .id never come
+ * from a style. A style only has to exist while elements using it are
+ * declared (a static, a global or a local in the frame all work).
  * (In static initializers write colours as braces; BARE_RGB is a compound literal.) */
+
+/* A theme: colours plus ready-made styles. The current theme also gives the
+ * window background and the default text colour.
+ *
+ *     const BareTheme *t = bare_theme();
+ *     bare_column(.style = &t->card) { bare_text("Hello", .style = &t->heading); }
+ *     bare_set_theme(bare_theme_light());
+ *
+ * Elements using a theme's styles animate to the new theme's colours. */
+typedef struct BareTheme {
+    BareColor background;       /* the window */
+    BareColor surface;          /* panels and cards */
+    BareColor text, muted;      /* body text, secondary text */
+    BareColor accent;           /* links, primary buttons, selection */
+    BareColor border;           /* hairlines and dividers */
+    BareBox panel;              /* a large flat surface */
+    BareBox card;               /* a raised surface with a shadow */
+    BareBox button;             /* a neutral button: hover and press looks, hand cursor */
+    BareBox primary;            /* the accent button */
+    BareBox row;                /* a list row that lights up under the mouse */
+    BareTextStyle title, heading, body, caption;
+} BareTheme;
+
+const BareTheme *bare_theme(void);              /* the current theme (dark until you set one) */
+void bare_set_theme(const BareTheme *theme);    /* copied: tweak a copy of a built-in for your own */
+const BareTheme *bare_theme_dark(void);
+const BareTheme *bare_theme_light(void);
 
 /* ------------------------------------------------------------------------ */
 /* Widgets (M8): one call each, built only from the elements above          */
@@ -464,7 +516,7 @@ void  bare_run(void (*frame)(void *user), void *user);
 
 void  bare_quit(void);                  /* closes the window, frees everything */
 
-void  bare_background(BareColor color); /* window clear colour (default: dark grey) */
+void  bare_background(BareColor color); /* window clear colour (default: the theme's background) */
 void  bare_title(const char *title);
 BareVec2 bare_window_size(void);
 float bare_pixel_scale(void);          /* physical pixels per logical pixel (devicePixelRatio) */

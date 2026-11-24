@@ -36,8 +36,8 @@ src/
     arena.c            bump allocator: per-frame arena and persistent arena
     id.c               FNV-1a hashing for BARE_ID / BARE_IDI / automatic IDs
     store.c            retained node table: id -> BareNode (open addressing); per-frame maps
-    tree.c             element tree built while the app declares UI (open/close/leaf), IDs,
-                       style resolution (defaults, BARE_ZERO; .style and looks join in M3/M7)
+    tree.c             element tree built while the app declares UI (open/close/leaf), IDs
+    style.c            .style chains, defaults, hover/press looks, glass resolution, the themes
     layout.c           flexbox passes
     easing.c           cubic-bezier evaluation
     spring.c           closed-form damped spring step
@@ -162,13 +162,28 @@ Pre-order matters: every child comes after its parent, so **iterating the array 
 parents** (bottom-up passes) and forwards visits parents first (top-down passes). Layout and emit need no recursion and
 no explicit stack. Strings are copied into the frame arena, so the app's buffers only need to live for the call.
 
-## 5. Styles (resolved in `tree.c`; may move to `style.c` when M7 makes it bigger)
+## 5. Styles and themes (`style.c`)
 
-For every element, in this order: start from zero → copy non-zero fields of `.style` (M7) → copy non-zero fields of
-the element → apply built-in defaults to fields still at 0 → if hovered, overlay non-zero `.hover` fields; if pressed,
-overlay `.press` (on top of hover) → resolve `BARE_ZERO` to 0. Inherited values (text colour, font) come from the
-nearest ancestor that sets them, else the theme default. The result is the element's **target** look; animation moves
-the visual look toward it.
+For every element, in this order: start from zero → walk its `.style` chain to the base, then lay the styles from the
+base up (each non-zero field overwrites) → lay the element's own non-zero fields on top → apply built-in defaults to
+fields still at 0 → if hovered, overlay non-zero `.hover` fields; if pressed, overlay `.press` (on top of hover) →
+resolve `BARE_ZERO` to 0. "Non-zero" means any bit set, so `BARE_ZERO` (-0.0f), `BARE_CLEAR` (transparent white),
+`BARE_START` (1), `BARE_CURSOR_ARROW` and `BARE_INSTANT` (an ease of duration `BARE_ZERO`) are values an element can
+use to cancel a style's. Inherited values (text colour, font) come from the nearest ancestor that sets them, else the
+theme. The result is the element's **target** look; animation moves the visual look toward it.
+
+Merge units: most fields one by one; groups that only make sense together are taken whole from the most specific
+place that sets any of them: padding (`.padding` and `.pad` as one unit, so an element's `.padding` replaces a style's
+`.pad`), `.shadow`, `.offset`, `.glass`, `.animate`, `.animate_layout`. `.hover` and `.press` are merged field by
+field, so a style's hover colour and an element's hover scale combine. `.id`, `.dir` and `.style` itself always come
+from the element. Text styles (`BareTextStyle`) follow the same rules. Chains are walked up to 8 deep; a cycle (or a
+deeper chain) is cut where it repeats and logged once per style with the element's file:line.
+
+Themes: `BareTheme` is colours plus ready-made styles (panel, card, button, primary, row; title, heading, body,
+caption). The current theme is a copy inside the context, so `&bare_theme()->card` is a stable address whose values
+change when `bare_set_theme` is called; elements using it then animate to the new values, because theme styles carry
+`.animate` (0.2 s ease-out on looks, instant layout). The theme's background is the clear colour unless the app called
+`bare_background`, and its text colour is the root text colour.
 
 Padding: `.pad` (per side) wins if any side is non-zero, else `.padding` on all sides.
 

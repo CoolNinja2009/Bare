@@ -53,6 +53,7 @@ add_library(bare_core STATIC
     src/core/hit.c
     src/core/input.c
     src/core/scroll.c
+    src/core/style.c
     src/core/gpu.c
     src/core/text.c
     src/core/font_stb.c

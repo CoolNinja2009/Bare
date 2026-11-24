@@ -1,6 +1,6 @@
 # Bare guide
 
-How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M6: clipping and scrolling) unless it's marked
+How to build UIs with Bare, for people who know HTML and CSS. Everything here works today (through M7: styles and themes) unless it's marked
 *(coming in Mx)*. The full list of what the web has and where Bare stands is the
 [web parity checklist](ROADMAP.md#web-parity-checklist-html--css--js--bare).
 
@@ -11,7 +11,7 @@ How to build UIs with Bare, for people who know HTML and CSS. Everything here wo
 5. [Sizes](#5-sizes)
 6. [Spacing and alignment](#6-spacing-and-alignment)
 7. [Text and images](#7-text-and-images)
-8. [Components are functions](#8-components-are-functions)
+8. [Components and styles](#8-components-and-styles)
 9. [Lists and IDs](#9-lists-and-ids)
 10. [Clicks, hover and keys](#10-clicks-hover-and-keys)
 11. [Movement](#11-movement)
@@ -110,7 +110,8 @@ bare_box(.width = 200, .height = 120,
 - `BARE_RGB` builds a value at run time, so it can't go in a `static` array; use a normal local array or
   `{ 99, 132, 255, 255 }` there.
 
-`bare_background(color)` sets the window colour, `bare_title("...")` the title.
+`bare_background(color)` sets the window colour (default: the theme's background, see section 8), `bare_title("...")`
+the title.
 
 ## 4. Rows, columns and stacks
 
@@ -255,7 +256,7 @@ bare_box(.width = 96, .height = 96, .radius = 48, .image = avatar);
 from memory, and `bare_image_free(img)` frees it. `examples/text.c` shows all of this, plus a liquid glass loupe that
 magnifies the text under the mouse.
 
-## 8. Components are functions
+## 8. Components and styles
 
 A "component" is a C function that declares elements. Parameters are its props:
 
@@ -274,8 +275,51 @@ bare_row(.width = BARE_GROW, .gap = 20) {
 }
 ```
 
-No classes, no framework: call it in a loop, pass it state, return values from it. Reusable looks like CSS classes
-(`.style = &card_style`) are *(coming in M7)*.
+No classes, no framework: call it in a loop, pass it state, return values from it.
+
+### Styles: reusable looks (CSS classes)
+
+A style is a plain `BareBox` (or `BareTextStyle` for text). Elements point at it with `.style`; what the element sets
+itself wins, everything it leaves at 0 comes from the style:
+
+```c
+const BareBox card = { .padding = 20, .radius = 16, .color = BARE_RGB(36, 38, 46),
+                       .shadow = BARE_SHADOW_SOFT, .hover = { .offset = { 0, -4 } },
+                       .animate = BARE_SPRING_SNAPPY };
+const BareTextStyle label = { .size = 20, .color = BARE_RGB(220, 224, 235) };
+
+bare_column(.style = &card, .width = 300) { bare_text("Revenue", .style = &label); }
+bare_column(.style = &card, .color = BARE_RGB(60, 40, 40)) { ... }     /* a red card */
+```
+
+- **Styles build on styles:** `const BareBox danger = { .style = &card, .color = BARE_RGB(120, 30, 40) };`.
+  A loop (`a` → `b` → `a`) is logged once and cut.
+- **Cancelling a style's value:** 0 means "not set", so use the deliberate nothings: `BARE_ZERO` (a real 0),
+  `BARE_CLEAR` (no colour), `BARE_START` (start alignment), `BARE_CURSOR_ARROW`, `BARE_INSTANT` (no animation).
+- **Some things go together:** padding (`.padding` and `.pad`), `.shadow`, `.offset`, `.glass` and the animations
+  are taken whole from the element if it sets any part of them. `.hover` and `.press` mix field by field: the
+  style's hover colour plus the element's hover scale.
+- A style is just a value: a local (before the loop, or built in the frame when it depends on state), a global or a
+  `static`. Presets like `BARE_RGB`, `BARE_SHADOW_SOFT` and `BARE_SPRING_SNAPPY` are compound literals, which C
+  doesn't allow in a `static` or global: write those values out in braces there.
+
+### Themes
+
+`bare_theme()` is the current theme: colours (`background`, `surface`, `text`, `muted`, `accent`, `border`) and
+ready-made styles (`panel`, `card`, `button`, `primary`, `row`; text: `title`, `heading`, `body`, `caption`). The
+theme also sets the window background and the default text colour. Bare starts dark.
+
+```c
+const BareTheme *t = bare_theme();
+bare_column(.style = &t->card) {
+    bare_text("Storage", .style = &t->heading);
+    bare_row(.style = &t->primary) { bare_text("Upgrade", .style = &t->body); }
+}
+if (clicked) bare_set_theme(bare_theme_light());     /* everything styled from the theme fades over */
+```
+
+Your own theme is a tweaked copy (like CSS variables): `BareTheme mine = *bare_theme_dark(); mine.accent = ...;
+mine.primary.color = mine.accent; bare_set_theme(&mine);`. `examples/styles.c` is a settings page in both themes.
 
 ## 9. Lists and IDs
 
@@ -422,7 +466,7 @@ for (int k = 0; k < count; k++) {
 
 What to know:
 
-- **Give moving things an id.** Bare tracks an element across frames by its id (section 8). A card that changes place
+- **Give moving things an id.** Bare tracks an element across frames by its id (section 9). A card that changes place
   in a list needs `BARE_IDI("card", i)` with `i` belonging to the card, not to its place, or Bare sees a different card
   appear in each slot instead of one card moving. The same id under another parent glides there too.
 - **Children ride along.** Positions animate relative to the parent, so when a card moves its contents move with it,
@@ -596,7 +640,8 @@ and `bench/` measures it against the same simulation running in Edge.
 | `<img src="a.png">`, `border-radius: 50%` | `.image = bare_image_load("a.png")`, `.radius = size / 2` |
 | `overflow: hidden` / `overflow: auto` | `.clip = true` / `.scroll = BARE_SCROLL_Y` |
 | virtual list (react-window) | `bare_visible(i, count, item_size) { ... }` |
-| `class="card"` | `.style = &card` *(M7)* |
+| `class="card"` | `.style = &card` (a `BareBox`; text: a `BareTextStyle`) |
+| CSS variables, light/dark themes | `bare_theme()->accent`, `bare_set_theme(bare_theme_light())` |
 | `<button>`, `<input type=checkbox>`, `<input type=range>` | `bare_button`, `bare_checkbox`, `bare_slider` *(M8)* |
 
 ## 15. Debugging
@@ -618,6 +663,6 @@ and `bench/` measures it against the same simulation running in Edge.
 
 ## 16. What's next
 
-Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): styles (M7), widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
+Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): widgets (M8), a second backend and the browser (M9), then the rest of what CSS has
 (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in `examples/` grow with it:
-`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `glass_motion/` and `fluid/` today.
+`hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`, `scroll.c`, `styles.c`, `glass_motion/` and `fluid/` today.

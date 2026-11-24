@@ -7,57 +7,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 0 means "default"; BARE_ZERO (-0.0f) means a real zero. */
-static float def(float v, float fallback) {
-    if (v == 0.0f) return signbit(v) ? 0.0f : fallback;
-    return v;
-}
-
-/* Glass is on when any field is set; the rest then take their defaults. */
-static bool resolve_glass(BareGlass *g) {
-    bool on = g->refraction != 0 || g->depth != 0 || g->blur != 0 || g->dispersion != 0 ||
-              g->shine != 0 || g->merge != 0 || g->zoom != 0 || g->light != 0 || g->tint.a != 0;
-    if (!on) return false;
-    g->refraction = def(g->refraction, 1.0f);
-    g->depth = def(g->depth, 20.0f);
-    g->blur = def(g->blur, 2.0f);
-    g->dispersion = def(g->dispersion, 1.0f);
-    g->shine = def(g->shine, 1.0f);
-    g->merge = BARE__MAX(g->merge, 0.0f);
-    g->zoom = g->zoom > 0 ? g->zoom : 1.0f;
-    return true;
-}
-
-static void resolve(BareBox *b) {
-    b->opacity = def(b->opacity, 1.0f);
-    b->scale = def(b->scale, 1.0f);
-    b->grow = def(b->grow, 1.0f);
-    b->shrink = def(b->shrink, 1.0f);
-    if (b->pad.top == 0 && b->pad.right == 0 && b->pad.bottom == 0 && b->pad.left == 0) {
-        b->pad.top = b->pad.right = b->pad.bottom = b->pad.left = b->padding;
-    }
-    if (b->opacity < 0) b->opacity = 0;
-    if (b->opacity > 1) b->opacity = 1;
-    if (b->border < 0) b->border = 0;
-    if (b->radius < 0) b->radius = 0;
-    if (b->scale < 0) b->scale = 0;
-}
-
-/* A look field replaces the box's when set (BARE_ZERO counts as set). */
-static float look_f(float base, float v) { return (v != 0.0f || signbit(v)) ? v : base; }
-
-static void apply_look(BareBox *b, const BareLook *l) {
-    if (l->color.a) b->color = l->color;
-    if (l->border_color.a) b->border_color = l->border_color;
-    if (l->text_color.a) b->text_color = l->text_color;
-    if (l->shadow.color.a) b->shadow = l->shadow;
-    b->opacity = look_f(b->opacity, l->opacity);
-    b->scale = look_f(b->scale, l->scale);
-    b->radius = look_f(b->radius, l->radius);
-    b->offset.x += l->offset.x;   /* a nudge on top of the element's own offset */
-    b->offset.y += l->offset.y;
-}
-
 /* Element IDs (ARCHITECTURE §4).
  *   explicit: the app's .id, made unique (and reported once) if it repeats;
  *   automatic: parent + call site + how many times that site ran under this
@@ -112,7 +61,7 @@ void bare__tree_begin(BareContext *ctx) {
 }
 
 /* Appends an element under the innermost open container; returns its index. */
-int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int line) {
+int bare__tree_push(BareContext *ctx, const BareBox *in, const char *file, int line) {
     if (!bare__grow(&ctx->alloc, (void **)&ctx->elems, &ctx->elem_cap, ctx->elem_count + 1, sizeof *ctx->elems)) {
         bare__log(ctx, "out of memory adding an element at %s:%d", file, line);
         return -1;
@@ -120,7 +69,10 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
     int index = ctx->elem_count++;
     BareElem *e = &ctx->elems[index];
     memset(e, 0, sizeof *e);
-    e->box = *box;
+    bare__style_box(ctx, in, &e->box, file, line);   /* its style chain under it */
+    const BareBox *box = &e->box;
+    const BareLook hover = box->hover, press = box->press;
+    const BareCursor cursor = box->cursor;
     e->file = file;
     e->line = line;
     e->first_child = e->last_child = e->next_sibling = -1;
@@ -142,13 +94,13 @@ int bare__tree_push(BareContext *ctx, const BareBox *box, const char *file, int 
 
     /* Looks apply in the same frame the state is known: hover, then press on top. */
     bool hovered = bare__chain_has(&ctx->hover, e->id);
-    if (hovered) apply_look(&e->box, &box->hover);
-    if (bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id)) apply_look(&e->box, &box->press);
+    if (hovered) bare__apply_look(&e->box, &hover);
+    if (bare__chain_has(&ctx->press[BARE__PRESS_LEFT], e->id)) bare__apply_look(&e->box, &press);
     /* The innermost hovered element with a cursor wins; it's declared last. */
-    if (hovered && box->cursor != BARE_CURSOR_DEFAULT) ctx->cursor = box->cursor;
+    if (hovered && cursor != BARE_CURSOR_DEFAULT) ctx->cursor = cursor;
 
-    resolve(&e->box);
-    e->glass = resolve_glass(&e->box.glass);
+    bare__resolve_box(&e->box);
+    e->glass = bare__resolve_glass(&e->box.glass);
     e->glass_amount = e->glass ? 1.0f : 0.0f;   /* animation may fade it (anim.c) */
     e->opacity = e->box.opacity * (e->parent >= 0 ? ctx->elems[e->parent].opacity : 1.0f);
     return index;
@@ -202,12 +154,17 @@ BareState bare_box_(const BareBox *box, const char *file, int line) {
 
 /* Text is a leaf element sized by its content; its colour comes from the
  * nearest .text_color unless the style sets one (emit.c). */
-static BareState push_text(BareContext *ctx, const char *str, int len, const BareTextStyle *style,
+static BareState push_text(BareContext *ctx, const char *str, int len, const BareTextStyle *in,
                            const char *file, int line) {
+    BareTextStyle merged;
+    bare__style_text(ctx, in, &merged, file, line);
+    const BareTextStyle *style = &merged;
     BareBox box;
     memset(&box, 0, sizeof box);
     box.id = style->id;
     box.text_color = style->color;
+    box.animate = style->animate;
+    box.animate_layout = BARE_INSTANT;   /* text glides with its parent, never on its own */
     int i = bare__tree_push(ctx, &box, file, line);
     if (i >= 0) ctx->elems[i].text = bare__text_new(ctx, str, len, style);
     return state_of(ctx, i);

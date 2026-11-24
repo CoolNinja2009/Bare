@@ -207,7 +207,7 @@ void bare__emit(BareContext *ctx) {
         const BareElem *e = &ctx->elems[i];
         while (depth > 0 && open_end[depth] < i) { pop_clip(ctx); depth--; }
         if (ink) {
-            BareColor up = e->parent >= 0 ? ink[e->parent] : BARE_WHITE;
+            BareColor up = e->parent >= 0 ? ink[e->parent] : ctx->theme.text;
             ink[i] = e->box.text_color.a ? e->box.text_color : up;
         }
         if (e->opacity <= 0) continue;   /* its children are transparent too */
@@ -223,7 +223,7 @@ void bare__emit(BareContext *ctx) {
         bool seen = r.w > 0 && r.h > 0 && overlaps(ink_bounds(e, r, s), open_rect[depth]);
         if (seen && e->text) {
             bool snap = e->vscale == 1.0f && !e->moving;
-            bare__text_emit(ctx, e->text, r, e->vscale, snap, color_f(ink ? ink[i] : BARE_WHITE, e->opacity));
+            bare__text_emit(ctx, e->text, r, e->vscale, snap, color_f(ink ? ink[i] : ctx->theme.text, e->opacity));
             continue;
         }
         if (seen) emit_box(ctx, i, r, &last_glass_cmd, &last_glass_parent);
@@ -249,5 +249,5 @@ void bare__emit(BareContext *ctx) {
     l->width = (int)roundf(ctx->width * ctx->scale);
     l->height = (int)roundf(ctx->height * ctx->scale);
     l->scale = ctx->scale;
-    l->clear = color_f(ctx->clear, 1.0f);
+    l->clear = color_f(ctx->clear_set ? ctx->clear : ctx->theme.background, 1.0f);
 }
