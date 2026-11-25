@@ -86,7 +86,7 @@ static void emit_rect(BareContext *ctx, const BareElem *e, BareRect r, bool with
     else rc->shadow_color = color_f(NONE, op);
 }
 
-/* An image stretched over the box, inside its rounded corners. */
+/* An image over the box (stretched, or cropped to its shape), inside its rounded corners. */
 static void emit_image(BareContext *ctx, const BareElem *e, BareRect r) {
     BareDrawCmd *cmd = push_cmd(ctx);
     if (!cmd) return;
@@ -97,6 +97,18 @@ static void emit_image(BareContext *ctx, const BareElem *e, BareRect r) {
     im->rect = r;
     const BareImageRec *rec = bare__image(ctx, im->texture);
     im->uv = rec && rec->bottom_up ? (BareRect){ 0, 1, 1, -1 } : (BareRect){ 0, 0, 1, 1 };
+    if (e->box.image_fit == BARE_FIT_COVER && rec && rec->width > 0 && rec->height > 0 && r.w > 0 && r.h > 0) {
+        float box = r.w / r.h, pic = (float)rec->width / (float)rec->height;
+        if (pic > box) {          /* wider: crop the sides */
+            float keep = box / pic;
+            im->uv.x += im->uv.w * (1 - keep) * 0.5f;
+            im->uv.w *= keep;
+        } else if (pic < box) {   /* taller: crop top and bottom */
+            float keep = pic / box;
+            im->uv.y += im->uv.h * (1 - keep) * 0.5f;
+            im->uv.h *= keep;
+        }
+    }
     for (int k = 0; k < 4; k++) im->radius[k] = radius;
     im->tint = (BareColorF){ 1, 1, 1, e->opacity };
 }

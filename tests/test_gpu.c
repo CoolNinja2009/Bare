@@ -164,6 +164,23 @@ TEST(image_boxes_draw_between_background_and_border) {
     teardown();
 }
 
+TEST(cover_fit_crops_to_the_box_shape) {
+    setup();
+    unsigned char px[4 * 2 * 4] = { 0 };
+    BareImage wide = bare_image_from_pixels(4, 2, px), tall = bare_image_from_pixels(2, 4, px);
+    bare_ctx_begin(ctx, 400, 300, 1.0f, 0.0);
+    bare_box(.width = 100, .height = 100, .image = wide, .image_fit = BARE_FIT_COVER);
+    bare_box(.width = 100, .height = 100, .image = tall, .image_fit = BARE_FIT_COVER);
+    bare_box(.width = 100, .height = 100, .image = tall);
+    const BareDrawList *l = bare_ctx_end(ctx, NULL);
+    CHECK(l->cmd_count == 3);
+    const BareRect a = l->cmds[0].as.image.uv, b = l->cmds[1].as.image.uv, c = l->cmds[2].as.image.uv;
+    CHECK_NEAR(a.x, 0.25, 0.001); CHECK_NEAR(a.w, 0.5, 0.001); CHECK_NEAR(a.y, 0, 0); CHECK_NEAR(a.h, 1, 0);
+    CHECK_NEAR(b.y, 0.25, 0.001); CHECK_NEAR(b.h, 0.5, 0.001); CHECK_NEAR(b.x, 0, 0); CHECK_NEAR(b.w, 1, 0);
+    CHECK_NEAR(c.w, 1, 0); CHECK_NEAR(c.h, 1, 0);
+    teardown();
+}
+
 TEST(nothing_without_a_context) {
     bare_ctx_make_current(NULL);
     CHECK(bare_canvas(.width = 4, .height = 4) == 0);
@@ -198,6 +215,7 @@ int main(void) {
     RUN(mistakes_are_reported_and_skipped);
     RUN(freeing_queues_destroy_and_recycles_ids);
     RUN(image_boxes_draw_between_background_and_border);
+    RUN(cover_fit_crops_to_the_box_shape);
     RUN(nothing_without_a_context);
     return test_report();
 }

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+void bare__pictures_stop(void);   /* picture.c */
+
 BarePlatform bare__sdl3_platform(void);
 BareRenderer bare__sdl3gpu_renderer(void);
 
@@ -16,6 +18,7 @@ static struct {
     BareRenderer  renderer;
     bool          open, in_frame, quit, shown, continuous, dirty;
     float         width, height, scale;
+    float         zoom;               /* BareWindowOptions.zoom: logical pixels = the system's / zoom */
     double        start, time, prev_time;
     int           capture_frames;     /* BARE_CAPTURE: frames left before quitting */
     double        fixed_dt;           /* BARE_FIXED_DT: seconds per frame, whatever the clock says */
@@ -39,14 +42,16 @@ static void clip_set(void *user, const char *text) { (void)user; app.platform.cl
 
 static int drag_query(void *user, float x, float y) {
     (void)user;
-    return app.ctx && bare_ctx_window_drag(app.ctx, (BareVec2){ x, y });
+    return app.ctx && bare_ctx_window_drag(app.ctx, (BareVec2){ x / app.zoom, y / app.zoom });
 }
 
 static bool window_open(int width, int height, const char *title, unsigned flags) {
     if (app.open) return true;
+    if (!(app.zoom > 0)) app.zoom = 1;
     app.platform = bare__sdl3_platform();
     app.renderer = bare__sdl3gpu_renderer();
-    if (!app.platform.open_window(app.platform.self, width, height, title, flags)) return false;
+    if (!app.platform.open_window(app.platform.self, (int)(width * app.zoom + 0.5f), (int)(height * app.zoom + 0.5f),
+                                  title, flags)) return false;
     if (app.platform.set_drag_query) app.platform.set_drag_query(app.platform.self, drag_query, NULL);
     if (!app.renderer.init(app.renderer.self, &app.platform)) {
         app.platform.close_window(app.platform.self);
@@ -61,6 +66,7 @@ static bool window_open(int width, int height, const char *title, unsigned flags
     bare_ctx_make_current(app.ctx);
     bare_ctx_set_clipboard(app.ctx, clip_get, clip_set, NULL);
     app.platform.window_size(app.platform.self, &app.width, &app.height, &app.scale);
+    app.width /= app.zoom, app.height /= app.zoom, app.scale *= app.zoom;
     app.start = app.prev_time = app.platform.time(app.platform.self);
     const char *capture = getenv("BARE_CAPTURE");
     /* BARE_CAPTURE: save frame BARE_CAPTURE_FRAMES (default 2) to a .bmp and quit. */
@@ -88,9 +94,11 @@ bool bare_window_transparent(int width, int height, const char *title) {
 
 bool bare_window_with_(const BareWindowOptions *o) {
     unsigned flags = (o->transparent ? BARE_WINDOW_TRANSPARENT : 0) | (o->frameless ? BARE_WINDOW_FRAMELESS : 0);
+    if (!app.open) app.zoom = o->zoom > 0 ? o->zoom : 1;
     if (!window_open(o->width > 0 ? o->width : 1280, o->height > 0 ? o->height : 800, o->title, flags)) return false;
     if ((o->min_width > 0 || o->min_height > 0) && app.platform.set_min_size)
-        app.platform.set_min_size(app.platform.self, o->min_width, o->min_height);
+        app.platform.set_min_size(app.platform.self, (int)(o->min_width * app.zoom + 0.5f),
+                                  (int)(o->min_height * app.zoom + 0.5f));
     return true;
 }
 
@@ -123,7 +131,16 @@ static bool is_input(BareEventKind k) {
 }
 
 /* Applies one platform event to the app state. */
-static void apply(const BareEvent *e) {
+static void apply(const BareEvent *event) {
+    /* The system's logical pixels to the app's (a played script is in the app's already). */
+    BareEvent zoomed = *event;
+    const BareEvent *e = &zoomed;
+    if (app.zoom != 1 && event->time != -1) {
+        float z = app.zoom;
+        if (e->kind == BARE_EVENT_MOUSE_MOVE) zoomed.as.mouse.x /= z, zoomed.as.mouse.y /= z;
+        if (e->kind == BARE_EVENT_MOUSE_BUTTON) zoomed.as.button.x /= z, zoomed.as.button.y /= z;
+        if (e->kind == BARE_EVENT_WHEEL && e->as.wheel.precise) zoomed.as.wheel.dx /= z, zoomed.as.wheel.dy /= z;
+    }
     /* With a fixed clock nothing else may move the app either: the real mouse
      * over the window would make every capture different. */
     if ((app.fixed_dt > 0 || app.script) && is_input(e->kind) && e->time != -1) return;
@@ -141,9 +158,9 @@ static void apply(const BareEvent *e) {
         return;
     }
     case BARE_EVENT_RESIZE:
-        app.width = e->as.size.w;
-        app.height = e->as.size.h;
-        app.scale = e->as.size.scale;
+        app.width = e->as.size.w / app.zoom;
+        app.height = e->as.size.h / app.zoom;
+        app.scale = e->as.size.scale * app.zoom;
         app.dirty = true;
         break;
     default: app.dirty = true; break;
@@ -161,7 +178,8 @@ static void end_frame(void) {
     BareTextInputKind ti = bare_ctx_text_input(app.ctx, &caret);
     bool moved = caret.x != app.text_rect.x || caret.y != app.text_rect.y || caret.h != app.text_rect.h;
     if (ti != app.text_input || (ti && moved)) {
-        if (ti && app.platform.start_text_input) app.platform.start_text_input(app.platform.self, ti, caret);
+        BareRect at = { caret.x * app.zoom, caret.y * app.zoom, caret.w * app.zoom, caret.h * app.zoom };
+        if (ti && app.platform.start_text_input) app.platform.start_text_input(app.platform.self, ti, at);
         else if (!ti && app.platform.stop_text_input) app.platform.stop_text_input(app.platform.self);
         app.text_input = ti;
         app.text_rect = caret;
@@ -290,6 +308,7 @@ void bare_run(void (*frame)(void *user), void *user) {
 void bare_quit(void) {
     if (!app.open) return;
     if (app.in_frame) bare_ctx_end(app.ctx, NULL);
+    bare__pictures_stop();
     bare_ctx_destroy(app.ctx);
     app.renderer.shutdown(app.renderer.self);
     app.platform.close_window(app.platform.self);

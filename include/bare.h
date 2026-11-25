@@ -221,6 +221,8 @@ typedef struct BareGlass {
 #define BARE_GLASS          ((BareGlass){ .refraction = 1.0f })
 #define BARE_GLASS_FROSTED  ((BareGlass){ .refraction = 0.6f, .blur = 18.0f, .tint = { 255, 255, 255, 30 } })
 
+typedef enum BareFit { BARE_FIT_STRETCH = 0, BARE_FIT_COVER } BareFit;   /* .image_fit */
+
 typedef enum BareCursor {
     BARE_CURSOR_DEFAULT = 0,
     BARE_CURSOR_HAND,
@@ -305,6 +307,28 @@ BareVec2  bare_image_size(BareImage image);                       /* in pixels; 
  * same size (video frames, live previews): no new image, no new id. False if
  * the image isn't one of those. */
 bool      bare_image_update(BareImage image, const void *rgba8);
+
+/* A picture file, loaded in the background and kept while you draw it: call it
+ * every frame, like the rest of the UI. 0 while it loads (a frame comes when
+ * it's ready) or if it can't be read. Moving pictures move: every frame of a
+ * GIF, a few seconds of a video (from a tenth of the way in). Reads PNG, JPEG,
+ * BMP, TGA, GIF; on Windows also what the system can (WebP, HEIC, TIFF, ...)
+ * and video (MP4, MKV, WebM, ... through Media Foundation). One not drawn for
+ * 10 s is freed; one that
+ * couldn't be read is tried again every 5 s while you ask for it.
+ *     bare_box(.width = 240, .height = 135, .radius = 12,
+ *              .image = bare_picture(path, .width = 480, .height = 270));
+ * .width / .height: the pixels to keep, cropped to that shape from the middle
+ * (one of them 0: the picture's shape; both 0: its own size). */
+typedef struct BarePictureOptions {
+    int width, height;
+    bool still;          /* only the first frame (a video's from a tenth of the way in) */
+    int frames;          /* at most this many frames of a moving picture (0: 40) */
+} BarePictureOptions;
+BareImage bare_picture_(const char *path, BarePictureOptions options);
+#define bare_picture(path, ...) bare_picture_((path), (BarePictureOptions){ __VA_ARGS__ })
+/* True once bare_picture with the same path and options found nothing it could read. */
+bool      bare_picture_failed(const char *path, BarePictureOptions options);
 
 /* ------------------------------------------------------------------------ */
 /* Canvas: your own GPU shaders (what WebGL is to a <canvas>)               */
@@ -421,7 +445,8 @@ typedef struct BareBox {
                                    Not snapped to whole pixels, so slow motion stays smooth */
     BareGlass glass;            /* liquid glass (see BareGlass) */
     BareColor text_color;       /* inherited by text inside; alpha 0 = inherit (white at the top) */
-    BareImage image;            /* drawn over .color, stretched to the box, rounded by .radius */
+    BareImage image;            /* drawn over .color, rounded by .radius; stretched to the box unless .image_fit */
+    BareFit image_fit;          /* BARE_FIT_COVER: fill the box keeping the picture's shape, cropping the overflow */
 
     /* interaction */
     BareLook hover, press;      /* looks while hovered / pressed */
@@ -835,6 +860,7 @@ typedef struct BareWindowOptions {
     bool transparent;           /* alpha-composited (see bare_window_transparent) */
     bool frameless;
     int min_width, min_height;  /* logical pixels (0 = no limit) */
+    float zoom;                 /* everything this much bigger (0 = 1): 0.8 is the same layout in a window 80% the size */
 } BareWindowOptions;
 #define bare_window_with(...) bare_window_with_(&(BareWindowOptions){ __VA_ARGS__ })
 bool  bare_window_with_(const BareWindowOptions *options);

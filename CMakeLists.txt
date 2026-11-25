@@ -116,8 +116,11 @@ if(BARE_BACKEND STREQUAL "SDL3")
         src/backend/sdl3/platform_sdl3.c
         src/backend/sdl3/renderer_sdl3gpu.c
         src/backend/dxbc.c
+        src/backend/media_win32.c
+        src/picture.c
     )
     target_include_directories(bare PRIVATE src shaders/generated)
+    target_include_directories(bare SYSTEM PRIVATE ${stb_SOURCE_DIR})
     target_link_libraries(bare PUBLIC bare_core PRIVATE SDL3::SDL3-static)
     target_compile_options(bare PRIVATE ${BARE_WARNINGS})
     if(MSVC)
@@ -127,6 +130,11 @@ if(BARE_BACKEND STREQUAL "SDL3")
         # bare_window_backdrop (desktop duplication) and frameless windows (DWM corners)
         target_sources(bare PRIVATE src/backend/backdrop_win32.c)
         target_link_libraries(bare PRIVATE d3d11 dxgi dxguid dwmapi)
+        # bare_picture: WIC still pictures, Media Foundation video
+        target_link_libraries(bare PRIVATE windowscodecs mfplat mfreadwrite mfuuid ole32 uuid)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(bare PRIVATE Threads::Threads)
     endif()
 else()
     message(FATAL_ERROR "Unknown BARE_BACKEND '${BARE_BACKEND}'")

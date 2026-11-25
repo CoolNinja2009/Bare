@@ -292,7 +292,18 @@ bare_box(.width = 96, .height = 96, .radius = 48, .image = avatar);
 
 `bare_image_size(img)` gives its pixel size (for an aspect ratio), `bare_image_from_pixels(w, h, rgba)` makes one
 from memory, and `bare_image_free(img)` frees it. `examples/text.c` shows all of this, plus a liquid glass loupe that
-magnifies the text under the mouse.
+magnifies the text under the mouse. `.image_fit = BARE_FIT_COVER` fills the box keeping the picture's shape, like CSS
+`object-fit: cover`.
+
+**Pictures from files, many of them, or moving.** For a gallery, call `bare_picture(path, .width, .height)` every
+frame instead, like any other part of the UI. It loads on a background thread (0 until then), shrinks to the size you
+ask (cropped from the middle), keeps it while you draw it and frees it 10 s after you stop. GIFs play every frame;
+on Windows it also reads WebP, HEIC and the rest WIC knows, and shows a few looping seconds of a video (Media
+Foundation). `.still = true` keeps only the first frame.
+
+```c
+bare_box(.width = 240, .height = 135, .radius = 12, .image = bare_picture(path, .width = 480, .height = 270));
+```
 
 ## 8. Components and styles
 
@@ -720,8 +731,8 @@ while (bare_frame()) {
 }
 ```
 
-The window is left out of screenshots and screen sharing while the backdrop is on (that's how it can see what's
-behind itself), and it returns 0 where it isn't available (other systems, Windows before 10 2004): draw a background
+To see what's behind itself the window is left out of screen capture, but only while it moves or resizes: at rest
+it shows in screenshots, recordings and screen shares, and the backdrop keeps its last picture. It returns 0 where it isn't available (other systems, Windows before 10 2004): draw a background
 of your own then. `bare_image_update` refreshes any image of the same size from new pixels in the same way.
 
 ## 13. Canvases and your own shaders

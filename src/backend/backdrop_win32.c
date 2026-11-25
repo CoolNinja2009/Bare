@@ -12,10 +12,12 @@
  * wallpaper) gives new frames at up to MAX_FPS. Minimised or hidden windows
  * cost nothing.
  *
- * Screenshots: an excluded window is missing from them, so a keyboard hook
- * watches for the screenshot keys (PrtScn with any modifier, Win+Shift+S) and
- * lets the window be captured for a few seconds, holding the last backdrop so
- * the glass doesn't see itself. Screen sharing still leaves it out. */
+ * Screenshots: an excluded window is missing from them and from recordings
+ * and screen shares. So the window is only excluded while it moves or resizes
+ * (and when it first shows); SETTLE_MS after it comes to rest it becomes
+ * capturable again and keeps the last picture, since the duplication would
+ * now show the window itself. The next move excludes it again and starts the
+ * duplication over, so no frame with the window in it is ever used. */
 #ifdef _WIN32
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -38,7 +40,7 @@
 
 #define MAX_FPS 60          /* a live desktop */
 #define MOVING_FPS 120      /* while the window moves */
-#define SHOT_MS 4000        /* how long a screenshot key leaves the window capturable */
+#define SETTLE_MS 300       /* at rest this long, the window can be captured again */
 
 struct BareBackdrop {
     HWND hwnd;
@@ -46,10 +48,6 @@ struct BareBackdrop {
     void *user;
     HANDLE thread;
     volatile LONG stop;
-    HANDLE shot_thread;           /* the screenshot-key hook's thread */
-    DWORD shot_tid;
-    volatile LONG visible;        /* capturable now (a screenshot key was pressed) */
-    volatile LONG64 visible_until;
     SRWLOCK lock;
     unsigned char *buf[3];   /* back (worker), ready, front (app) */
     int w[3], h[3];
@@ -208,18 +206,35 @@ static void publish(BareBackdrop *b) {
     if (b->wake) b->wake(b->user);
 }
 
+static void exclude(BareBackdrop *b, bool on) {
+    SetWindowDisplayAffinity(b->hwnd, on ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+    DwmFlush();   /* composed that way before the next desktop frame is taken */
+}
+
 static DWORD WINAPI worker(void *arg) {
     BareBackdrop *b = arg;
     RECT last = { 0 };
     HMONITOR last_mon = NULL;
-    ULONGLONG last_publish = 0, moved_at = 0;
-    bool dirty = true, held = false;
+    ULONGLONG last_publish = 0, moved_at = GetTickCount64();
+    bool dirty = true, excluded = true, away = false;
     while (!b->stop) {
-        if (!IsWindowVisible(b->hwnd) || IsIconic(b->hwnd)) { Sleep(100); dirty = true; continue; }
-        /* While a screenshot may be taken the duplication shows this window: hold the last picture,
-         * and afterwards start over from a whole new frame (the old one may contain the window). */
-        if (b->visible) { held = true; Sleep(15); continue; }
-        if (held) { held = false; drop_duplication(b); last_mon = NULL; dirty = true; Sleep(30); continue; }
+        if (!IsWindowVisible(b->hwnd) || IsIconic(b->hwnd)) { Sleep(100); away = true; continue; }
+        RECT client;
+        GetClientRect(b->hwnd, &client);
+        MapWindowPoints(b->hwnd, NULL, (POINT *)&client, 2);
+        ULONGLONG now = GetTickCount64();
+        if (away || memcmp(&client, &last, sizeof client)) { away = false; dirty = true; moved_at = now; }
+        bool moving = now - moved_at < SETTLE_MS;
+        if (!excluded) {
+            if (!moving) { Sleep(8); continue; }   /* at rest and capturable: keep the last picture */
+            /* It moves again: the old desktop at the new place at once, then a new look without the window. */
+            if (copy_region(b, client)) { publish(b); last = client; }
+            exclude(b, true);
+            excluded = true;
+            drop_duplication(b);
+            last_mon = NULL;
+        }
+        if (!moving && !dirty) { exclude(b, false); excluded = false; continue; }
         HMONITOR mon = MonitorFromWindow(b->hwnd, MONITOR_DEFAULTTONEAREST);
         if (!b->dup || mon != last_mon) {
             if (!open_duplication(b)) { Sleep(500); continue; }   /* lock screen, UAC, a mode change */
@@ -227,15 +242,11 @@ static DWORD WINAPI worker(void *arg) {
             dirty = true;
         }
         bool lost = false;
-        bool moving = GetTickCount64() - moved_at < 500;
-        if (next_frame(b, dirty ? 0 : moving ? 1 : 15, &lost)) dirty = true;
+        if (next_frame(b, dirty && b->full ? 0 : moving ? 1 : 15, &lost)) dirty = true;
         if (lost) { drop_duplication(b); last_mon = NULL; Sleep(50); continue; }
-        RECT client;
-        GetClientRect(b->hwnd, &client);
-        MapWindowPoints(b->hwnd, NULL, (POINT *)&client, 2);
-        if (memcmp(&client, &last, sizeof client)) { dirty = true; moved_at = GetTickCount64(); moving = true; }
-        if (!dirty) continue;
-        ULONGLONG now = GetTickCount64(), gap = 1000 / (moving ? MOVING_FPS : MAX_FPS);
+        if (!dirty || !b->full) continue;
+        now = GetTickCount64();
+        ULONGLONG gap = 1000 / (moving ? MOVING_FPS : MAX_FPS);
         if (now - last_publish < gap) Sleep((DWORD)(gap - (now - last_publish)));
         if (copy_region(b, client)) {
             publish(b);
@@ -245,49 +256,6 @@ static DWORD WINAPI worker(void *arg) {
         }
     }
     drop_duplication(b);
-    return 0;
-}
-
-/* ---- screenshots ---------------------------------------------------------- */
-
-static BareBackdrop *volatile g_shot;   /* the window the hook serves (Bare has one) */
-
-static LRESULT CALLBACK shot_key(int code, WPARAM wp, LPARAM lp) {
-    BareBackdrop *b = g_shot;
-    if (code == HC_ACTION && b && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
-        const KBDLLHOOKSTRUCT *k = (const KBDLLHOOKSTRUCT *)lp;
-        bool win = ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) != 0;
-        bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-        if ((k->vkCode == VK_SNAPSHOT || (win && shift && k->vkCode == 'S')) && !IsIconic(b->hwnd)) {
-            InterlockedExchange64(&b->visible_until, (LONG64)GetTickCount64() + SHOT_MS);
-            if (!InterlockedExchange(&b->visible, 1)) {
-                SetWindowDisplayAffinity(b->hwnd, WDA_NONE);
-                DwmFlush();   /* composed capturable before the key reaches the screenshot tool */
-            }
-        }
-    }
-    return CallNextHookEx(NULL, code, wp, lp);
-}
-
-static DWORD WINAPI shot_main(void *arg) {
-    BareBackdrop *b = arg;
-    MSG m;
-    PeekMessageW(&m, NULL, 0, 0, PM_NOREMOVE);   /* a queue for PostThreadMessage */
-    HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, shot_key, GetModuleHandleW(NULL), 0);
-    for (;;) {
-        MsgWaitForMultipleObjects(0, NULL, FALSE, b->visible ? 100 : INFINITE, QS_ALLINPUT);
-        bool quit = false;
-        while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) {
-            if (m.message == WM_QUIT) quit = true;
-            DispatchMessageW(&m);
-        }
-        if (b->visible && (quit || (LONG64)GetTickCount64() >= b->visible_until)) {
-            if (!quit) SetWindowDisplayAffinity(b->hwnd, WDA_EXCLUDEFROMCAPTURE);
-            InterlockedExchange(&b->visible, 0);
-        }
-        if (quit) break;
-    }
-    if (hook) UnhookWindowsHookEx(hook);
     return 0;
 }
 
@@ -307,8 +275,6 @@ BareBackdrop *bare__backdrop_start(void *hwnd, void (*wake)(void *user), void *u
         free(b);
         return NULL;
     }
-    g_shot = b;
-    b->shot_thread = CreateThread(NULL, 0, shot_main, b, 0, &b->shot_tid);
     return b;
 }
 
@@ -331,12 +297,6 @@ const void *bare__backdrop_take(BareBackdrop *b, int *width, int *height) {
 void bare__backdrop_stop(BareBackdrop *b) {
     if (!b) return;
     InterlockedExchange(&b->stop, 1);
-    if (g_shot == b) g_shot = NULL;
-    if (b->shot_thread) {
-        PostThreadMessageW(b->shot_tid, WM_QUIT, 0, 0);
-        WaitForSingleObject(b->shot_thread, 2000);
-        CloseHandle(b->shot_thread);
-    }
     WaitForSingleObject(b->thread, 2000);
     CloseHandle(b->thread);
     if (IsWindow(b->hwnd)) SetWindowDisplayAffinity(b->hwnd, WDA_NONE);
