@@ -124,6 +124,7 @@ if(BARE_BACKEND STREQUAL "SDL3")
         src/bare.c
         src/backend/sdl3/platform_sdl3.c
         src/backend/sdl3/renderer_sdl3gpu.c
+        src/backend/sdl3/sound_sdl3.c
         src/backend/dxbc.c
         src/backend/media_win32.c
         src/picture.c

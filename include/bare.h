@@ -231,7 +231,10 @@ typedef enum BareCursor {
     BARE_CURSOR_RESIZE_EW,
     BARE_CURSOR_RESIZE_NS,
     BARE_CURSOR_NOT_ALLOWED,
-    BARE_CURSOR_ARROW     /* the normal arrow, even over a parent or style that set another */
+    BARE_CURSOR_ARROW,    /* the normal arrow, even over a parent or style that set another */
+    BARE_CURSOR_CROSSHAIR,
+    BARE_CURSOR_RESIZE_NWSE,   /* corners: top-left to bottom-right */
+    BARE_CURSOR_RESIZE_NESW
 } BareCursor;
 
 /* ------------------------------------------------------------------------ */
@@ -957,6 +960,17 @@ bool bare_key_pressed(BareKey key);     /* went down this frame, or auto-repeate
 
 const char *bare_clipboard(void);       /* valid until the next frame */
 void        bare_set_clipboard(const char *text);
+
+/* Short sounds held in memory (clicks, cues), played on the default output.
+ * Samples are 32-bit floats, interleaved when stereo; they're copied. Several
+ * can play at once. The device opens on the first play and closes again when
+ * nothing has played for a while.
+ *     BareSound tick = bare_sound(samples, frames, 1, 48000);
+ *     if (bare_button("OK").clicked) bare_sound_play(tick, 0.5f); */
+typedef uint32_t BareSound;   /* 0 = none */
+BareSound bare_sound(const float *samples, int frames, int channels, int rate);
+void      bare_sound_play(BareSound sound, float volume);   /* volume 0..1 */
+void      bare_sound_free(BareSound sound);
 
 /* ------------------------------------------------------------------------ */
 /* Internals the macros above expand to. Not for direct use.                */

@@ -18,7 +18,7 @@ typedef struct TextChunk { struct TextChunk *next; int used, cap; char *data; } 
 typedef struct SdlPlatform {
     SDL_Window *window;
     Uint32      wake_event;
-    SDL_Cursor *cursors[BARE_CURSOR_NOT_ALLOWED + 1];
+    SDL_Cursor *cursors[BARE_CURSOR_RESIZE_NESW + 1];
     BareCursor  cursor;
     char       *clipboard;
     BareTextInputKind text_kind;   /* text input is on (and of this kind) */
@@ -116,7 +116,7 @@ static void close_window(void *self) {
 #ifdef _WIN32
     bare__backdrop_stop(sdl.backdrop);
 #endif
-    for (int i = 0; i <= BARE_CURSOR_NOT_ALLOWED; i++) {
+    for (int i = 0; i <= BARE_CURSOR_RESIZE_NESW; i++) {
         if (sdl.cursors[i]) SDL_DestroyCursor(sdl.cursors[i]);
     }
     SDL_free(sdl.clipboard);
@@ -347,10 +347,11 @@ static double now(void *self) { (void)self; return SDL_GetTicksNS() / 1e9; }
 
 static void set_cursor(void *self, BareCursor cursor) {
     (void)self;
-    if (cursor == sdl.cursor || cursor < 0 || cursor > BARE_CURSOR_NOT_ALLOWED) return;
+    if (cursor == sdl.cursor || cursor < 0 || cursor > BARE_CURSOR_RESIZE_NESW || cursor == BARE_CURSOR_ARROW) return;
     static const SDL_SystemCursor map[] = {
         SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_POINTER, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_MOVE,
-        SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NS_RESIZE, SDL_SYSTEM_CURSOR_NOT_ALLOWED,
+        SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NS_RESIZE, SDL_SYSTEM_CURSOR_NOT_ALLOWED, SDL_SYSTEM_CURSOR_DEFAULT,
+        SDL_SYSTEM_CURSOR_CROSSHAIR, SDL_SYSTEM_CURSOR_NWSE_RESIZE, SDL_SYSTEM_CURSOR_NESW_RESIZE,
     };
     if (!sdl.cursors[cursor]) sdl.cursors[cursor] = SDL_CreateSystemCursor(map[cursor]);
     if (sdl.cursors[cursor]) SDL_SetCursor(sdl.cursors[cursor]);
