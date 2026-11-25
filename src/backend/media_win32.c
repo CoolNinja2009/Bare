@@ -27,10 +27,14 @@
 #define THREAD_LOCAL __thread
 #endif
 
-/* each decoding thread has its own */
-static THREAD_LOCAL bool com_ready, mf_ready, gpu_tried;
-static THREAD_LOCAL ID3D11Device *gpu_device;
-static THREAD_LOCAL IMFDXGIDeviceManager *gpu_manager;
+/* each decoding thread starts COM and Media Foundation; they all share one D3D11 device for video, kept
+ * while any of them is busy (a device costs the driver's memory, about 10 MB each) */
+static THREAD_LOCAL bool com_ready, mf_ready, gpu_using;
+static SRWLOCK gpu_lock = SRWLOCK_INIT;
+static ID3D11Device *gpu_device;
+static IMFDXGIDeviceManager *gpu_manager;
+static int gpu_users;
+static bool gpu_failed;
 
 static const GUID k_iid_multithread = { 0x9b7e4e00, 0x342c, 0x4106, { 0xa1, 0x9f, 0x4f, 0x27, 0x04, 0xf6, 0x89, 0xf0 } };
 
@@ -41,39 +45,55 @@ void bare__media_thread_begin(void) {
     mf_ready = SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
 }
 
+/* This thread is done with video for now; the last one to be lets the device go. */
+void bare__media_thread_idle(void) {
+    if (!gpu_using) return;
+    gpu_using = false;
+    AcquireSRWLockExclusive(&gpu_lock);
+    if (--gpu_users == 0) {
+        release((IUnknown *)gpu_manager);
+        release((IUnknown *)gpu_device);
+        gpu_manager = NULL, gpu_device = NULL;
+    }
+    ReleaseSRWLockExclusive(&gpu_lock);
+}
+
 void bare__media_thread_end(void) {
-    release((IUnknown *)gpu_manager);
-    release((IUnknown *)gpu_device);
-    gpu_manager = NULL, gpu_device = NULL, gpu_tried = false;
+    bare__media_thread_idle();
     if (mf_ready) MFShutdown();
     if (com_ready) CoUninitialize();
     mf_ready = com_ready = false;
 }
 
-/* This thread's D3D11 device for Media Foundation, made the first time a video is read (NULL: no GPU). */
+/* The shared D3D11 device for Media Foundation, made the first time a video is read (NULL: no GPU). */
 static IMFDXGIDeviceManager *gpu(void) {
-    if (gpu_tried) return gpu_manager;
-    gpu_tried = true;
-    ID3D11Device *dev = NULL;
-    ID3D10Multithread *mt = NULL;
-    IMFDXGIDeviceManager *mgr = NULL;
-    UINT token = 0;
-    if (FAILED(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
-                                 D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, NULL, 0,
-                                 D3D11_SDK_VERSION, &dev, NULL, NULL)))
-        return NULL;
-    if (SUCCEEDED(ID3D11Device_QueryInterface(dev, &k_iid_multithread, (void **)&mt))) {
-        ID3D10Multithread_SetMultithreadProtected(mt, TRUE);   /* Media Foundation uses it from its own threads */
-        release((IUnknown *)mt);
+    AcquireSRWLockExclusive(&gpu_lock);
+    if (!gpu_using) gpu_using = true, gpu_users++;
+    if (!gpu_manager && !gpu_failed) {
+        ID3D11Device *dev = NULL;
+        ID3D10Multithread *mt = NULL;
+        IMFDXGIDeviceManager *mgr = NULL;
+        UINT token = 0;
+        if (SUCCEEDED(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
+                                        D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, NULL, 0,
+                                        D3D11_SDK_VERSION, &dev, NULL, NULL))) {
+            if (SUCCEEDED(ID3D11Device_QueryInterface(dev, &k_iid_multithread, (void **)&mt))) {
+                ID3D10Multithread_SetMultithreadProtected(mt, TRUE);   /* every decoding thread uses it */
+                release((IUnknown *)mt);
+            }
+            if (SUCCEEDED(MFCreateDXGIDeviceManager(&token, &mgr)) &&
+                SUCCEEDED(IMFDXGIDeviceManager_ResetDevice(mgr, (IUnknown *)dev, token))) {
+                gpu_device = dev, gpu_manager = mgr;
+                dev = NULL, mgr = NULL;
+            }
+        }
+        release((IUnknown *)mgr);
+        release((IUnknown *)dev);
+        gpu_failed = !gpu_manager;   /* no GPU decoding here: the CPU from now on */
     }
-    if (SUCCEEDED(MFCreateDXGIDeviceManager(&token, &mgr)) &&
-        SUCCEEDED(IMFDXGIDeviceManager_ResetDevice(mgr, (IUnknown *)dev, token))) {
-        gpu_device = dev, gpu_manager = mgr;
-        return mgr;
-    }
-    release((IUnknown *)mgr);
-    release((IUnknown *)dev);
-    return NULL;
+    IMFDXGIDeviceManager *m = gpu_manager;
+    ReleaseSRWLockExclusive(&gpu_lock);
+    return m;
 }
 
 static wchar_t *widen(const char *s) {
@@ -316,6 +336,7 @@ bool bare__media_video(const char *path, int frames, float fps, int want_w, int 
 #include "media.h"
 void bare__media_thread_begin(void) {}
 void bare__media_thread_end(void) {}
+void bare__media_thread_idle(void) {}
 bool bare__media_thumb(const char *path, int size, BareMediaFrame frame, void *user) {
     (void)path, (void)size, (void)frame, (void)user;
     return false;

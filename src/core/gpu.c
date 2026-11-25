@@ -57,6 +57,11 @@ void bare__gpu_publish(BareContext *ctx) {
     ctx->gpu_pending = done;
     ctx->gpu_pending.count = 0;
     ctx->gpu_pending.data_size = 0;
+    if (done.data_cap > (4 << 20)) {   /* room a burst of pictures needed once isn't kept */
+        bare__free(&ctx->alloc, done.data, (size_t)done.data_cap);
+        ctx->gpu_pending.data = NULL;
+        ctx->gpu_pending.data_cap = 0;
+    }
 
     BareGpuQueue *q = &ctx->gpu_published;
     for (int i = 0; i < q->count; i++) {
@@ -159,6 +164,22 @@ BareImage bare_image_from_pixels(int width, int height, const void *rgba8) {
     return id;
 }
 
+BareImage bare_image_frames(int width, int height, int frames, const void *rgba8) {
+    BareContext *ctx = need_ctx("bare_image_frames");
+    if (frames < 1) frames = 1;
+    if (!ctx || !valid_size(ctx, "bare_image_frames", width, height * frames)) return 0;
+    BareImage id = bare_image_from_pixels(width, height * frames, rgba8);
+    if (id) ctx->images[id - 1].height = height, ctx->images[id - 1].frames = frames;
+    return id;
+}
+
+void bare_image_frame(BareImage image, int frame) {
+    BareContext *ctx = bare_ctx_current();
+    const BareImageRec *r = bare__image(ctx, image);
+    if (!r || r->frames < 2) return;
+    ctx->images[image - 1].frame = frame < 0 ? 0 : frame >= r->frames ? r->frames - 1 : frame;
+}
+
 bool bare_image_update(BareImage image, const void *rgba8) {
     BareContext *ctx = need_ctx("bare_image_update");
     const BareImageRec *r = bare__image(ctx, image);
@@ -166,10 +187,11 @@ bool bare_image_update(BareImage image, const void *rgba8) {
         if (ctx) bare__log(ctx, "bare_image_update: %u isn't an image made from pixels", (unsigned)image);
         return false;
     }
-    intptr_t data = push_data(ctx, rgba8, r->width * r->height * 4);
+    int h = r->height * (r->frames > 1 ? r->frames : 1);
+    intptr_t data = push_data(ctx, rgba8, r->width * h * 4);
     BareGpuOp *upload = data > 0 ? push_op(ctx, BARE_GPU_IMAGE_UPLOAD) : NULL;
     if (!upload) return false;
-    upload->as.image = (BareGpuImage){ .id = image, .width = r->width, .height = r->height, .format = BARE_RGBA8,
+    upload->as.image = (BareGpuImage){ .id = image, .width = r->width, .height = h, .format = BARE_RGBA8,
                                        .pixels = as_offset(data) };
     return true;
 }

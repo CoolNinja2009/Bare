@@ -7,7 +7,7 @@
  * thread copies the part under the client area out as RGBA. The app draws it
  * as the window's background and glass bends the real desktop.
  *
- * The thread keeps the last whole desktop on the GPU, so moving the window
+ * While the window moves the thread keeps the last whole desktop on the GPU, so moving it
  * over a still desktop only copies the new region; a live desktop (a video
  * wallpaper) gives new frames at up to MAX_FPS. Minimised or hidden windows
  * cost nothing.
@@ -16,8 +16,9 @@
  * and screen shares. So the window is only excluded while it moves or resizes
  * (and when it first shows); SETTLE_MS after it comes to rest it becomes
  * capturable again and keeps the last picture, since the duplication would
- * now show the window itself. The next move excludes it again and starts the
- * duplication over, so no frame with the window in it is ever used. */
+ * now show the window itself, and the duplication and its memory go. The next
+ * move excludes it again and starts the duplication over, so no frame with
+ * the window in it is ever used. */
 #ifdef _WIN32
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -206,6 +207,20 @@ static void publish(BareBackdrop *b) {
     if (b->wake) b->wake(b->user);
 }
 
+/* At rest the app has its picture: the duplication, its D3D11 device and the spare buffers go, so a still
+ * window holds no second copy of the desktop. A move opens them again. */
+static void rest(BareBackdrop *b) {
+    drop_duplication(b);
+    free(b->buf[0]);
+    b->buf[0] = NULL, b->w[0] = b->h[0] = 0;
+    AcquireSRWLockExclusive(&b->lock);
+    if (!b->fresh) {
+        free(b->buf[1]);
+        b->buf[1] = NULL, b->w[1] = b->h[1] = 0;
+    }
+    ReleaseSRWLockExclusive(&b->lock);
+}
+
 static void exclude(BareBackdrop *b, bool on) {
     SetWindowDisplayAffinity(b->hwnd, on ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
     DwmFlush();   /* composed that way before the next desktop frame is taken */
@@ -226,15 +241,12 @@ static DWORD WINAPI worker(void *arg) {
         if (away || memcmp(&client, &last, sizeof client)) { away = false; dirty = true; moved_at = now; }
         bool moving = now - moved_at < SETTLE_MS;
         if (!excluded) {
-            if (!moving) { Sleep(8); continue; }   /* at rest and capturable: keep the last picture */
-            /* It moves again: the old desktop at the new place at once, then a new look without the window. */
-            if (copy_region(b, client)) { publish(b); last = client; }
-            exclude(b, true);
+            if (!moving) { Sleep(8); continue; }   /* at rest and capturable: the app keeps the last picture */
+            exclude(b, true);   /* it moves again: a new look without the window */
             excluded = true;
-            drop_duplication(b);
             last_mon = NULL;
         }
-        if (!moving && !dirty) { exclude(b, false); excluded = false; continue; }
+        if (!moving && !dirty) { exclude(b, false); excluded = false; rest(b); continue; }
         HMONITOR mon = MonitorFromWindow(b->hwnd, MONITOR_DEFAULTTONEAREST);
         if (!b->dup || mon != last_mon) {
             if (!open_duplication(b)) { Sleep(500); continue; }   /* lock screen, UAC, a mode change */

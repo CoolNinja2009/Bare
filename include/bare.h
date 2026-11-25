@@ -310,6 +310,11 @@ BareVec2  bare_image_size(BareImage image);                       /* in pixels; 
  * same size (video frames, live previews): no new image, no new id. False if
  * the image isn't one of those. */
 bool      bare_image_update(BareImage image, const void *rgba8);
+/* An image of `frames` pictures of width x height, stacked top to bottom in
+ * rgba8, kept on the GPU; it shows one at a time, picked by bare_image_frame
+ * (no upload, no copy in memory). bare_image_size is one frame's. */
+BareImage bare_image_frames(int width, int height, int frames, const void *rgba8);
+void      bare_image_frame(BareImage image, int frame);
 
 /* A picture file, loaded in the background and kept while you draw it: call it
  * every frame, like the rest of the UI. 0 while it loads (a frame comes when

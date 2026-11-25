@@ -82,6 +82,8 @@ typedef struct GpuRenderer {
 
     SDL_GPUTransferBuffer   *upload_xfer;
     Uint32                   upload_cap;         /* bytes */
+    SDL_GPUTransferBuffer   *image_xfer;         /* the frame's image uploads */
+    Uint32                   image_cap;          /* bytes */
 
     Instance  *instances; Uint32 instance_count, instances_alloc;
     Batch     *batches;   Uint32 batch_count, batches_alloc;
@@ -339,6 +341,7 @@ static void shutdown_renderer(void *self) {
     if (gpu.instance_buf) SDL_ReleaseGPUBuffer(gpu.device, gpu.instance_buf);
     if (gpu.instance_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.instance_xfer);
     if (gpu.upload_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.upload_xfer);
+    if (gpu.image_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.image_xfer);
     SDL_ReleaseGPUTexture(gpu.device, gpu.white);
     SDL_ReleaseGPUSampler(gpu.device, gpu.sampler);
     SDL_ReleaseGPUSampler(gpu.device, gpu.mip_sampler);
@@ -721,17 +724,40 @@ static void create_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
     }
 }
 
-static void upload_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
-    if (im->id >= gpu.texture_cap || !gpu.textures[im->id].tex || !im->pixels) return;
+static Uint32 image_bytes(const BareGpuImage *im) { return (Uint32)im->width * (Uint32)im->height * 4; }
+
+/* Every image upload of the frame goes through one transfer buffer, filled
+ * once: mapping a buffer per upload makes SDL keep a new copy for each while
+ * the GPU still reads the last, and a burst of pictures would leave dozens of
+ * picture-sized buffers behind. One that grew past STAGE_KEEP for a burst is
+ * let go once the frame's copies are recorded. */
+#define STAGE_KEEP (4u << 20)
+
+static bool stage_images(const BareDrawList *list) {
+    Uint32 total = 0;
+    for (int i = 0; i < list->op_count; i++)
+        if (list->ops[i].kind == BARE_GPU_IMAGE_UPLOAD && list->ops[i].as.image.pixels)
+            total += image_bytes(&list->ops[i].as.image);
+    if (!total) return false;
+    if (!ensure_xfer(&gpu.image_xfer, &gpu.image_cap, total, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD)) return false;
+    Uint8 *dst = SDL_MapGPUTransferBuffer(gpu.device, gpu.image_xfer, true);
+    if (!dst) return false;
+    for (int i = 0; i < list->op_count; i++) {
+        const BareGpuImage *im = &list->ops[i].as.image;
+        if (list->ops[i].kind != BARE_GPU_IMAGE_UPLOAD || !im->pixels) continue;
+        memcpy(dst, im->pixels, image_bytes(im));
+        dst += image_bytes(im);
+    }
+    SDL_UnmapGPUTransferBuffer(gpu.device, gpu.image_xfer);
+    return true;
+}
+
+static void upload_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im, Uint32 offset) {
+    if (im->id >= gpu.texture_cap || !gpu.textures[im->id].tex) return;
     Texture *t = &gpu.textures[im->id];
-    Uint32 bytes = (Uint32)t->w * (Uint32)t->h * 4;
-    if (!ensure_xfer(&gpu.upload_xfer, &gpu.upload_cap, bytes, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD)) return;
-    void *dst = SDL_MapGPUTransferBuffer(gpu.device, gpu.upload_xfer, true);
-    if (!dst) return;
-    memcpy(dst, im->pixels, bytes);
-    SDL_UnmapGPUTransferBuffer(gpu.device, gpu.upload_xfer);
+    if (t->w != im->width || t->h != im->height) return;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
-    SDL_GPUTextureTransferInfo src = { .transfer_buffer = gpu.upload_xfer };
+    SDL_GPUTextureTransferInfo src = { .transfer_buffer = gpu.image_xfer, .offset = offset };
     SDL_GPUTextureRegion region = { .texture = t->tex, .w = (Uint32)t->w, .h = (Uint32)t->h, .d = 1 };
     SDL_UploadToGPUTexture(copy, &src, &region, false);
     SDL_EndGPUCopyPass(copy);
@@ -860,11 +886,18 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p) {
 }
 
 static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
+    bool staged = stage_images(list);
+    Uint32 offset = 0;
     for (int i = 0; i < list->op_count; i++) {
         const BareGpuOp *op = &list->ops[i];
         switch (op->kind) {
         case BARE_GPU_IMAGE_CREATE: create_image(cmd, &op->as.image); break;
-        case BARE_GPU_IMAGE_UPLOAD: upload_image(cmd, &op->as.image); break;
+        case BARE_GPU_IMAGE_UPLOAD:
+            if (staged && op->as.image.pixels) {
+                upload_image(cmd, &op->as.image, offset);
+                offset += image_bytes(&op->as.image);
+            }
+            break;
         case BARE_GPU_IMAGE_DESTROY: {
             Uint32 id = op->as.image.id;
             if (id < gpu.texture_cap && gpu.textures[id].tex) SDL_ReleaseGPUTexture(gpu.device, gpu.textures[id].tex);
@@ -875,6 +908,11 @@ static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
         case BARE_GPU_SHADER_DESTROY: destroy_shader(op->as.shader.id); break;
         case BARE_GPU_PASS: run_pass(cmd, &op->as.pass); break;
         }
+    }
+    if (gpu.image_cap > STAGE_KEEP) {   /* released once the GPU is done with it */
+        SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.image_xfer);
+        gpu.image_xfer = NULL;
+        gpu.image_cap = 0;
     }
 }
 

@@ -97,6 +97,11 @@ static void emit_image(BareContext *ctx, const BareElem *e, BareRect r) {
     im->rect = r;
     const BareImageRec *rec = bare__image(ctx, im->texture);
     im->uv = rec && rec->bottom_up ? (BareRect){ 0, 1, 1, -1 } : (BareRect){ 0, 0, 1, 1 };
+    if (rec && rec->frames > 1) {   /* one frame of the strip, half a pixel in so its neighbours don't bleed */
+        float all = (float)rec->height * (float)rec->frames;
+        im->uv.y = ((float)rec->frame * (float)rec->height + 0.5f) / all;
+        im->uv.h = ((float)rec->height - 1.0f) / all;
+    }
     if (e->box.image_fit == BARE_FIT_COVER && rec && rec->width > 0 && rec->height > 0 && r.w > 0 && r.h > 0) {
         float box = r.w / r.h, pic = (float)rec->width / (float)rec->height;
         if (pic > box) {          /* wider: crop the sides */

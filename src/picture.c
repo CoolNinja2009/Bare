@@ -8,9 +8,12 @@
  * full (a moving picture's first frame showing as soon as it's decoded). stb_image reads PNG / JPEG / BMP / TGA and GIFs (one
  * frame at a time, so a long one costs only the frames kept); the system's
  * decoders (src/backend/media.h) read the rest and video, on the GPU when
- * they can. Moving pictures keep their frames here and play by
- * bare_image_update while they are drawn, stepping together on one
- * PICTURE_FPS clock; one not asked for in KEEP_S is freed. */
+ * they can. A moving picture's frames go to the GPU once as one strip
+ * (bare_image_frames) and play by picking the frame, all stepping together
+ * on one PICTURE_FPS clock; one not asked for in KEEP_S is freed. */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L   /* clock_gettime */
+#endif
 #include "bare.h"
 #include "backend/media.h"
 #include <math.h>
@@ -23,6 +26,7 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -63,6 +67,8 @@
 #define VIDEO_FPS    10.0f
 #define MAX_WORKERS  4
 #define BIG_FILE     (1u << 20)      /* a file this big shows the system's cached thumbnail while it's read */
+#define IDLE_S       30              /* a decoding thread with nothing to do this long lets its GPU device go */
+#define MAX_STRIP    16384           /* a moving picture's frames, stacked, up to this tall live on the GPU */
 
 /* ---- threads --------------------------------------------------------------- */
 
@@ -75,6 +81,7 @@ static void lock(Lock *l) { AcquireSRWLockExclusive(l); }
 static void unlock(Lock *l) { ReleaseSRWLockExclusive(l); }
 static void cond_init(Cond *c) { InitializeConditionVariable(c); }
 static void cond_wait(Cond *c, Lock *l) { SleepConditionVariableSRW(c, l, INFINITE, 0); }
+static void cond_wait_ms(Cond *c, Lock *l, int ms) { SleepConditionVariableSRW(c, l, (DWORD)ms, 0); }
 static void cond_one(Cond *c) { WakeConditionVariable(c); }
 static void cond_all(Cond *c) { WakeAllConditionVariable(c); }
 #else
@@ -86,6 +93,14 @@ static void lock(Lock *l) { pthread_mutex_lock(l); }
 static void unlock(Lock *l) { pthread_mutex_unlock(l); }
 static void cond_init(Cond *c) { pthread_cond_init(c, NULL); }
 static void cond_wait(Cond *c, Lock *l) { pthread_cond_wait(c, l); }
+static void cond_wait_ms(Cond *c, Lock *l, int ms) {
+    struct timespec t;
+    clock_gettime(CLOCK_REALTIME, &t);
+    t.tv_sec += ms / 1000;
+    t.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (t.tv_nsec >= 1000000000L) t.tv_sec++, t.tv_nsec -= 1000000000L;
+    pthread_cond_timedwait(c, l, &t);
+}
 static void cond_one(Cond *c) { pthread_cond_signal(c); }
 static void cond_all(Cond *c) { pthread_cond_broadcast(c); }
 #endif
@@ -415,6 +430,14 @@ static void *worker(void *arg)
     bare__media_thread_begin();
     for (;;) {
         lock(&P.lock);
+        if (!P.quit && !P.queued && !P.nlater) {   /* nothing to do for IDLE_S: the decoders' GPU memory goes */
+            cond_wait_ms(&P.cond, &P.lock, IDLE_S * 1000);
+            if (!P.quit && !P.queued && !P.nlater) {
+                unlock(&P.lock);
+                bare__media_thread_idle();
+                lock(&P.lock);
+            }
+        }
         while (!P.quit && !P.queued && !P.nlater) cond_wait(&P.cond, &P.lock);
         if (P.quit) { unlock(&P.lock); break; }
         Job j = P.queued ? P.queue[--P.queued] : P.later[--P.nlater];   /* newest first, first pass first */
@@ -524,14 +547,18 @@ static void take_results(void) {
             p->done = true;
             p->queued = false;
             p->done_at = bare_time();
+            /* A moving picture's frames go to the GPU once, as one strip, and leave memory; playing only picks
+             * which one shows. One too tall for a strip keeps its frames here and uploads each as it shows. */
+            bool strip = r->count > 1 && (int64_t)r->h * r->count <= MAX_STRIP;
             if (r->count > 0) {
-                if (p->image && (p->w != r->w || p->h != r->h)) bare_image_free(p->image), p->image = 0;
-                if (p->image) bare_image_update(p->image, r->rgba);
+                if (p->image && (strip || p->w != r->w || p->h != r->h)) bare_image_free(p->image), p->image = 0;
+                if (strip) p->image = bare_image_frames(r->w, r->h, r->count, r->rgba);
+                else if (p->image) bare_image_update(p->image, r->rgba);
                 else p->image = bare_image_from_pixels(r->w, r->h, r->rgba);
                 p->w = r->w, p->h = r->h, p->count = r->count, p->shown = 0, p->start = bare_time(), p->total_ms = 0;
                 if (r->count > 1) {
-                    p->rgba = r->rgba, p->delays = r->delays;
-                    r->rgba = NULL, r->delays = NULL;
+                    if (!strip) p->rgba = r->rgba, r->rgba = NULL;
+                    p->delays = r->delays, r->delays = NULL;
                     for (int k = 0; k < p->count; k++) p->total_ms += p->delays[k];
                 }
             }
@@ -573,7 +600,8 @@ static void play(Pic *p) {
     }
     if (k >= p->count) k = p->count - 1;
     if (k != p->shown) {
-        bare_image_update(p->image, p->rgba + (size_t)p->w * p->h * 4 * (size_t)k);
+        if (p->rgba) bare_image_update(p->image, p->rgba + (size_t)p->w * p->h * 4 * (size_t)k);
+        else bare_image_frame(p->image, k);
         p->shown = k;
     }
     /* Every moving picture steps on one shared clock: a window of them would otherwise wake for each one's own

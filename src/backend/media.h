@@ -12,6 +12,7 @@ typedef bool (*BareMediaFrame)(void *user, const unsigned char *pixels, int widt
 
 void bare__media_thread_begin(void);   /* each decoding thread, before the calls below */
 void bare__media_thread_end(void);
+void bare__media_thread_idle(void);    /* nothing to decode for now: let go of what can be made again */
 /* The picture the system already keeps for a file (Explorer's thumbnail), about `size` pixels on its long
  * side, only if it is cached: fast, for something to show while the file is read. */
 bool bare__media_thumb(const char *path, int size, BareMediaFrame frame, void *user);

@@ -311,6 +311,7 @@ typedef struct BareImageRec {
     bool       alive, canvas;
     bool       internal;        /* Bare's own (the glyph atlas): not the app's to free */
     bool       bottom_up;       /* a canvas whose first row is the bottom of the picture */
+    int        frames, frame;   /* bare_image_frames: height is one frame's; frame is the one shown */
     int32_t    next_free;
 } BareImageRec;
 
