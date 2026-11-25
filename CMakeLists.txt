@@ -99,17 +99,26 @@ endif()
 # ---------------------------------------------------------------------------
 # Backend + simple API
 # ---------------------------------------------------------------------------
+option(BARE_SDL3_SYSTEM "Link the system's SDL3 (pkg-config sdl3, 3.4 or newer) instead of building it in" OFF)
 if(BARE_BACKEND STREQUAL "SDL3")
-    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-    set(SDL_STATIC ON CACHE BOOL "" FORCE)
-    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(SDL3
-        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-        GIT_TAG release-3.4.20
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(SDL3)
+    if(BARE_SDL3_SYSTEM)
+        # Linux packages that already carry or depend on SDL3: one copy, the system's
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(BARE_SDL3 REQUIRED IMPORTED_TARGET GLOBAL sdl3>=3.4)
+        set(BARE_SDL3_TARGET PkgConfig::BARE_SDL3)
+    else()
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(SDL3
+            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+            GIT_TAG release-3.4.20
+            GIT_SHALLOW TRUE
+            EXCLUDE_FROM_ALL)
+        FetchContent_MakeAvailable(SDL3)
+        set(BARE_SDL3_TARGET SDL3::SDL3-static)
+    endif()
 
     add_library(bare STATIC
         src/bare.c
@@ -121,7 +130,7 @@ if(BARE_BACKEND STREQUAL "SDL3")
     )
     target_include_directories(bare PRIVATE src shaders/generated)
     target_include_directories(bare SYSTEM PRIVATE ${stb_SOURCE_DIR})
-    target_link_libraries(bare PUBLIC bare_core PRIVATE SDL3::SDL3-static)
+    target_link_libraries(bare PUBLIC bare_core PRIVATE ${BARE_SDL3_TARGET})
     target_compile_options(bare PRIVATE ${BARE_WARNINGS})
     if(MSVC)
         target_compile_definitions(bare PRIVATE _CRT_SECURE_NO_WARNINGS)   # getenv, sscanf
@@ -130,8 +139,8 @@ if(BARE_BACKEND STREQUAL "SDL3")
         # bare_window_backdrop (desktop duplication) and frameless windows (DWM corners)
         target_sources(bare PRIVATE src/backend/backdrop_win32.c)
         target_link_libraries(bare PRIVATE d3d11 dxgi dxguid dwmapi)
-        # bare_picture: WIC still pictures, Media Foundation video
-        target_link_libraries(bare PRIVATE windowscodecs mfplat mfreadwrite mfuuid ole32 uuid)
+        # bare_picture: the shell's thumbnail cache, WIC still pictures, Media Foundation video (on the GPU)
+        target_link_libraries(bare PRIVATE windowscodecs mfplat mfreadwrite mfuuid ole32 uuid shell32 gdi32)
     else()
         find_package(Threads REQUIRED)
         target_link_libraries(bare PRIVATE Threads::Threads)

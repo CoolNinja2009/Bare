@@ -153,8 +153,10 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 **2026-11-25:** frameless windows (`bare_window_with`, `.window_drag`, `bare_window_minimize/maximize/close`) and
 `bare_window_backdrop()` (Windows: the live desktop behind the window by DXGI Desktop Duplication on a worker thread,
 the window excluded from capture with `WDA_EXCLUDEFROMCAPTURE` only while it moves, capturable at rest; `src/backend/backdrop_win32.c`), so glass bends what's
-really behind the window. `bare_image_update`. `bare_picture` (src/picture.c: async, cached, GIF frames; Windows WIC and Media Foundation
-video in src/backend/media_win32.c, nothing on other systems yet) and `.image_fit = BARE_FIT_COVER`. Glass now copies only the region it bends (`blit_region`). Screen+'s
+really behind the window. `bare_image_update`. `bare_picture` (src/picture.c: up to 4 worker threads in two passes (small files, then big
+ones and video), early pictures (shell thumbnail cache, first frame), GIFs streamed a frame at a time; Windows shell cache,
+WIC and Media Foundation (D3D11 DXVA, scaled on the GPU, CPU fallback) in src/backend/media_win32.c, nothing on other
+systems yet) and `.image_fit = BARE_FIT_COVER`. Glass now copies only the region it bends (`blit_region`). Screen+'s
 Bare window (`Wallpaper+/ScreenPlus/src/ui_bare`) is the first user. Not done: macOS/Linux backdrops (they return 0).
 
 **2026-11-24: M1, M1.5 (liquid glass), M2 (flexbox layout), M3 (interaction), Canvas (custom GPU shaders), M4

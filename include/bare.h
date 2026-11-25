@@ -310,7 +310,8 @@ bool      bare_image_update(BareImage image, const void *rgba8);
 
 /* A picture file, loaded in the background and kept while you draw it: call it
  * every frame, like the rest of the UI. 0 while it loads (a frame comes when
- * it's ready) or if it can't be read. Moving pictures move: every frame of a
+ * it's ready) or if it can't be read; a big file or a video may first show a
+ * quick picture (the system's cached thumbnail, its first frame). Moving pictures move: every frame of a
  * GIF, a few seconds of a video (from a tenth of the way in). Reads PNG, JPEG,
  * BMP, TGA, GIF; on Windows also what the system can (WebP, HEIC, TIFF, ...)
  * and video (MP4, MKV, WebM, ... through Media Foundation). One not drawn for

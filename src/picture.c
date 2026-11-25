@@ -1,10 +1,14 @@
 /* picture.c: bare_picture, files loaded in the background, kept while drawn.
  *
- * One worker thread decodes, newest request first (what is on screen now),
- * and shrinks every frame to the size asked for as it goes, so a 4K video
- * costs no more than its thumbnail. stb_image reads PNG / JPEG / BMP / TGA and
- * every frame of a GIF; the system's decoders (src/backend/media.h) read the
- * rest and video. Moving pictures keep their frames here and play by
+ * A few worker threads decode, newest request first (what is on screen now),
+ * and shrink every frame to the size asked for as it goes, so a 4K video
+ * costs no more than its thumbnail. Work goes in two passes so everything
+ * shows something soon: the first reads small files whole and gives big
+ * ones and videos the system's cached thumbnail; the second reads those in
+ * full (a moving picture's first frame showing as soon as it's decoded). stb_image reads PNG / JPEG / BMP / TGA and GIFs (one
+ * frame at a time, so a long one costs only the frames kept); the system's
+ * decoders (src/backend/media.h) read the rest and video, on the GPU when
+ * they can. Moving pictures keep their frames here and play by
  * bare_image_update while they are drawn; one not asked for in KEEP_S is
  * freed. */
 #include "bare.h"
@@ -18,6 +22,8 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -53,19 +59,33 @@
 #define GIF_BUDGET   (512u << 20)    /* a GIF whose frames would take more shows its first */
 #define MAX_SIDE     4096            /* the largest picture kept when no size is asked for */
 #define VIDEO_FPS    10.0f
+#define MAX_WORKERS  4
+#define BIG_FILE     (1u << 20)      /* a file this big shows the system's cached thumbnail while it's read */
 
 /* ---- threads --------------------------------------------------------------- */
 
 #ifdef _WIN32
 typedef SRWLOCK Lock;
+typedef CONDITION_VARIABLE Cond;
+typedef HANDLE Thread;
 static void lock_init(Lock *l) { InitializeSRWLock(l); }
 static void lock(Lock *l) { AcquireSRWLockExclusive(l); }
 static void unlock(Lock *l) { ReleaseSRWLockExclusive(l); }
+static void cond_init(Cond *c) { InitializeConditionVariable(c); }
+static void cond_wait(Cond *c, Lock *l) { SleepConditionVariableSRW(c, l, INFINITE, 0); }
+static void cond_one(Cond *c) { WakeConditionVariable(c); }
+static void cond_all(Cond *c) { WakeAllConditionVariable(c); }
 #else
 typedef pthread_mutex_t Lock;
+typedef pthread_cond_t Cond;
+typedef pthread_t Thread;
 static void lock_init(Lock *l) { pthread_mutex_init(l, NULL); }
 static void lock(Lock *l) { pthread_mutex_lock(l); }
 static void unlock(Lock *l) { pthread_mutex_unlock(l); }
+static void cond_init(Cond *c) { pthread_cond_init(c, NULL); }
+static void cond_wait(Cond *c, Lock *l) { pthread_cond_wait(c, l); }
+static void cond_one(Cond *c) { pthread_cond_signal(c); }
+static void cond_all(Cond *c) { pthread_cond_broadcast(c); }
 #endif
 
 typedef struct Job {
@@ -74,12 +94,15 @@ typedef struct Job {
     bool still;
     int slot;
     uint32_t gen;
+    bool later;               /* the second pass: big files and videos, read in full */
+    bool shown;               /* something was sent to show early */
 } Job;
 
 typedef struct Result {
     struct Result *next;
     int slot;
     uint32_t gen;
+    bool early;               /* something to show while the rest is read */
     int w, h, count;          /* count 0: couldn't be read */
     unsigned char *rgba;      /* count frames of w x h */
     int *delays;              /* ms each */
@@ -101,14 +124,13 @@ typedef struct Pic {
 static struct {
     bool started, quit;
     Lock lock;
-#ifdef _WIN32
-    HANDLE thread, event;
-#else
-    pthread_t thread;
-    pthread_cond_t cond;
-#endif
+    Cond cond;
+    Thread threads[MAX_WORKERS];
+    int workers;
     Job queue[MAX_QUEUE];
     int queued;
+    Job later[MAX_PICTURES];  /* never fuller than the pictures waiting */
+    int nlater;
     Result *results;
     Pic pics[MAX_PICTURES];
     int count;
@@ -119,11 +141,26 @@ static struct {
 /* ---- decoding (worker) ----------------------------------------------------- */
 
 typedef struct Out {
+    const Job *job;
     int want_w, want_h, max_frames;
     int w, h, count, cap;
     unsigned char *rgba;
     int *delays;
+    bool early_sent;          /* a first picture went to the app already */
 } Out;
+
+static void deliver(Result *r);
+
+/* Sends `rgba` (w x h) to show while the rest is read. */
+static void send_early(Out *o, const unsigned char *rgba, int w, int h) {
+    Result *r = calloc(1, sizeof *r);
+    if (!r || !(r->rgba = malloc((size_t)w * h * 4))) { free(r); return; }
+    memcpy(r->rgba, rgba, (size_t)w * h * 4);
+    r->slot = o->job->slot, r->gen = o->job->gen, r->early = true;
+    r->w = w, r->h = h, r->count = 1;
+    o->early_sent = true;
+    deliver(r);
+}
 
 /* The size to keep: what was asked, or the picture's own (no bigger than MAX_SIDE), keeping its shape. */
 static void out_size(Out *o, int sw, int sh) {
@@ -193,6 +230,7 @@ static bool add_frame(void *user, const unsigned char *px, int w, int h, int pit
     if (o->count >= o->cap) return false;
     cover(px, w, h, pitch, bgra, o->rgba + (size_t)o->w * o->h * 4 * (size_t)o->count, o->w, o->h);
     o->delays[o->count++] = delay_ms;
+    if (o->count == 1 && o->cap > 1 && o->job && !o->early_sent) send_early(o, o->rgba, o->w, o->h);   /* first frame */
     return o->count < o->cap;
 }
 
@@ -245,6 +283,37 @@ static int gif_frames(const unsigned char *d, size_t n, int *w, int *h) {
     return frames;
 }
 
+/* A GIF's frames one at a time (stb_image's own loop keeps them all): every `total / keep`th is kept, lasting
+ * as long as those it stands for. */
+static void gif_stream(const unsigned char *data, size_t n, int total, Out *o) {
+    stbi__context s;
+    stbi__start_mem(&s, data, (int)n);
+    stbi__gif *g = calloc(1, sizeof *g);
+    if (!g) return;
+    int keep = total < o->max_frames ? total : o->max_frames, comp = 0, k = 0;
+    unsigned char *saved = NULL;   /* the frame "restore to previous" goes back to */
+    for (int i = 0;; i++) {
+        stbi_uc *px = stbi__gif_load_next(&s, g, &comp, 4, saved);
+        if (!px || px == (stbi_uc *)&s) break;
+        if (k < keep && i >= (int)((int64_t)k * total / keep)) {
+            int had = o->count;
+            add_frame(o, px, g->w, g->h, g->w * 4, false, 0);
+            if (o->count == had) break;
+            k++;
+        }
+        if (o->count) o->delays[o->count - 1] += g->delay > 10 ? g->delay : 100;   /* as browsers do */
+        if ((g->eflags & 0x1c) != 0x0c) {
+            size_t bytes = (size_t)g->w * g->h * 4;
+            if (!saved) saved = malloc(bytes);
+            if (!saved) break;
+            memcpy(saved, px, bytes);
+        }
+    }
+    STBI_FREE(g->out);
+    free(saved);
+    free(g);
+}
+
 static const char *const k_video[] = { ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".mpg", ".mpeg",
                                        ".ts", ".m2ts", ".flv", ".3gp", ".ogv" };
 
@@ -259,32 +328,61 @@ static bool is_video(const char *path) {
     return false;
 }
 
-static void decode(const Job *j, Out *o) {
+/* The system's cached thumbnail, sent to show while the file is read. */
+static bool early_thumb(void *user, const unsigned char *px, int w, int h, int pitch, bool bgra, int delay_ms) {
+    Out *o = user, t = { .want_w = o->want_w, .want_h = o->want_h, .max_frames = 1 };
+    (void)delay_ms;
+    add_frame(&t, px, w, h, pitch, bgra, 0);
+    if (t.count) send_early(o, t.rgba, t.w, t.h);
+    free(t.rgba);
+    free(t.delays);
+    return false;
+}
+
+static long long file_size(const char *path) {
+#ifdef _WIN32
+    wchar_t w[1024];
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 1024) <= 0 || !GetFileAttributesExW(w, GetFileExInfoStandard, &a))
+        return -1;
+    return (long long)a.nFileSizeHigh << 32 | a.nFileSizeLow;
+#else
+    struct stat st;
+    return stat(path, &st) ? -1 : (long long)st.st_size;
+#endif
+}
+
+static void decode_init(const Job *j, Out *o) {
+    o->job = j;
     o->want_w = j->width, o->want_h = j->height;
     o->max_frames = j->still ? 1 : j->frames;
-    if (is_video(j->path)) {
-        bare__media_video(j->path, o->max_frames, VIDEO_FPS, add_frame, o);
+    o->early_sent = j->shown;
+}
+
+/* The first pass for a big file or a video: the system's cached thumbnail, if it has one. True: read the
+ * rest in the second pass. */
+static bool first_pass(Job *j) {
+    if (j->later || (j->width <= 0 && j->height <= 0)) return false;
+    if (!is_video(j->path) && file_size(j->path) < (long long)BIG_FILE) return false;
+    Out o = { 0 };
+    decode_init(j, &o);
+    bare__media_thumb(j->path, j->width > j->height ? j->width : j->height, early_thumb, &o);
+    j->shown = o.early_sent;
+    return true;
+}
+
+static void decode(const Job *j, Out *o) {
+    decode_init(j, o);
+    bool video = is_video(j->path);
+    size_t n = 0;
+    unsigned char *data = video ? NULL : read_file(j->path, &n);
+    if (video) {
+        bare__media_video(j->path, o->max_frames, VIDEO_FPS, j->width, j->height, add_frame, o);
         return;
     }
-    size_t n = 0;
-    unsigned char *data = read_file(j->path, &n);
     if (data && n <= 0x7fffffff) {
         int gw = 0, gh = 0, frames = j->still ? 0 : gif_frames(data, n, &gw, &gh);
-        if (frames > 1 && (uint64_t)gw * gh * 4 * frames <= GIF_BUDGET) {
-            int *delays = NULL, w = 0, h = 0, z = 0, comp = 0;
-            unsigned char *px = stbi_load_gif_from_memory(data, (int)n, &delays, &w, &h, &z, &comp, 4);
-            if (px && z > 0) {
-                /* evenly thinned to max_frames; each kept frame lasts as long as those it stands for */
-                int keep = z < o->max_frames ? z : o->max_frames;
-                for (int k = 0; k < keep; k++) {
-                    int a = (int)((int64_t)k * z / keep), b = (int)((int64_t)(k + 1) * z / keep), ms = 0;
-                    for (int i = a; i < b; i++) ms += delays && delays[i] > 10 ? delays[i] : 100;   /* as browsers do */
-                    if (!add_frame(o, px + (size_t)w * h * 4 * a, w, h, w * 4, false, ms) && o->count < keep) break;
-                }
-            }
-            stbi_image_free(px);
-            free(delays);
-        }
+        if (frames > 1) gif_stream(data, n, frames, o);
         if (!o->count) {
             int w = 0, h = 0, comp = 0;
             unsigned char *px = stbi_load_from_memory(data, (int)n, &w, &h, &comp, 4);
@@ -294,7 +392,7 @@ static void decode(const Job *j, Out *o) {
     }
     free(data);
     if (!o->count) bare__media_image(j->path, add_frame, o);   /* WebP, HEIC, TIFF, ... */
-    if (!o->count) bare__media_video(j->path, o->max_frames, VIDEO_FPS, add_frame, o);
+    if (!o->count) bare__media_video(j->path, o->max_frames, VIDEO_FPS, j->width, j->height, add_frame, o);
 }
 
 static void deliver(Result *r) {
@@ -314,20 +412,21 @@ static void *worker(void *arg)
     (void)arg;
     bare__media_thread_begin();
     for (;;) {
-        Job j = { 0 };
-        bool have = false;
         lock(&P.lock);
-#ifndef _WIN32
-        while (!P.quit && !P.queued) pthread_cond_wait(&P.cond, &P.lock);
-#endif
+        while (!P.quit && !P.queued && !P.nlater) cond_wait(&P.cond, &P.lock);
         if (P.quit) { unlock(&P.lock); break; }
-        if (P.queued) { j = P.queue[--P.queued]; have = true; }   /* newest first */
+        Job j = P.queued ? P.queue[--P.queued] : P.later[--P.nlater];   /* newest first, first pass first */
         unlock(&P.lock);
-        if (!have) {
-#ifdef _WIN32
-            WaitForSingleObject(P.event, INFINITE);
-#endif
-            continue;
+        if (first_pass(&j)) {
+            bool deferred = false;
+            lock(&P.lock);
+            if (P.nlater < MAX_PICTURES) {
+                j.later = true;
+                P.later[P.nlater++] = j;
+                deferred = true;
+            }
+            unlock(&P.lock);
+            if (deferred) continue;
         }
         Out o = { 0 };
         decode(&j, &o);
@@ -350,18 +449,35 @@ static void *worker(void *arg)
 #endif
 }
 
+/* Workers: one fewer than the processor's cores (it draws), 1 to MAX_WORKERS. */
+static int worker_count(void) {
+    int cores = 1;
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    cores = (int)si.dwNumberOfProcessors;
+#elif defined(_SC_NPROCESSORS_ONLN)
+    cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    cores--;
+    return cores < 1 ? 1 : cores > MAX_WORKERS ? MAX_WORKERS : cores;
+}
+
 static bool start(void) {
     if (P.started) return true;
     lock_init(&P.lock);
+    cond_init(&P.cond);
+    for (int want = worker_count(); P.workers < want; P.workers++) {
 #ifdef _WIN32
-    P.event = CreateEventW(NULL, FALSE, FALSE, NULL);
-    P.thread = P.event ? CreateThread(NULL, 0, worker, NULL, 0, NULL) : NULL;
-    if (!P.thread) return false;
-    SetThreadPriority(P.thread, THREAD_PRIORITY_BELOW_NORMAL);
+        HANDLE t = CreateThread(NULL, 0, worker, NULL, 0, NULL);
+        if (!t) break;
+        SetThreadPriority(t, THREAD_PRIORITY_BELOW_NORMAL);
+        P.threads[P.workers] = t;
 #else
-    pthread_cond_init(&P.cond, NULL);
-    if (pthread_create(&P.thread, NULL, worker, NULL)) return false;
+        if (pthread_create(&P.threads[P.workers], NULL, worker, NULL)) break;
 #endif
+    }
+    if (!P.workers) return false;
     P.started = true;
     return true;
 }
@@ -397,13 +513,20 @@ static void take_results(void) {
         Pic *p = NULL;
         for (int i = 0; i < P.count; i++)
             if (P.pics[i].gen == r->gen) { p = &P.pics[i]; break; }
-        if (p && !p->done) {
+        if (p && !p->done && r->early) {   /* to show until the rest comes */
+            if (p->image && (p->w != r->w || p->h != r->h)) bare_image_free(p->image), p->image = 0;
+            if (p->image) bare_image_update(p->image, r->rgba);
+            else p->image = bare_image_from_pixels(r->w, r->h, r->rgba);
+            if (p->image) p->w = r->w, p->h = r->h, p->count = 1;
+        } else if (p && !p->done) {
             p->done = true;
             p->queued = false;
             p->done_at = bare_time();
             if (r->count > 0) {
-                p->image = bare_image_from_pixels(r->w, r->h, r->rgba);
-                p->w = r->w, p->h = r->h, p->count = r->count, p->shown = 0, p->start = bare_time();
+                if (p->image && (p->w != r->w || p->h != r->h)) bare_image_free(p->image), p->image = 0;
+                if (p->image) bare_image_update(p->image, r->rgba);
+                else p->image = bare_image_from_pixels(r->w, r->h, r->rgba);
+                p->w = r->w, p->h = r->h, p->count = r->count, p->shown = 0, p->start = bare_time(), p->total_ms = 0;
                 if (r->count > 1) {
                     p->rgba = r->rgba, p->delays = r->delays;
                     r->rgba = NULL, r->delays = NULL;
@@ -431,14 +554,10 @@ static void enqueue(Pic *p) {
         memmove(&P.queue[0], &P.queue[1], sizeof(Job) * (MAX_QUEUE - 1));
         P.queued--;
     }
-    P.queue[P.queued++] = (Job){ copy, p->width, p->height, p->frames, p->still, 0, p->gen };
+    P.queue[P.queued++] = (Job){ copy, p->width, p->height, p->frames, p->still, 0, p->gen, false, false };
+    cond_one(&P.cond);
     unlock(&P.lock);
     p->queued = true;
-#ifdef _WIN32
-    SetEvent(P.event);
-#else
-    pthread_cond_signal(&P.cond);
-#endif
 }
 
 /* The frame of a moving picture for now, and a wake for the next one. */
@@ -496,7 +615,7 @@ BareImage bare_picture_(const char *path, BarePictureOptions o) {
     if (p->done && !p->image && now - p->done_at > RETRY_S) p->done = false;   /* the file may be there now */
     if (!p->done) {
         if (!p->queued) enqueue(p);
-        return 0;
+        return p->image;   /* what shows early, or 0 */
     }
     play(p);
     return p->image;
@@ -519,19 +638,19 @@ void bare__pictures_stop(void) {
     if (!P.started) return;
     lock(&P.lock);
     P.quit = true;
+    cond_all(&P.cond);
     unlock(&P.lock);
-#ifdef _WIN32
-    SetEvent(P.event);
-    bool ended = WaitForSingleObject(P.thread, 2000) == WAIT_OBJECT_0;   /* a decoder may be slow to give up */
-    CloseHandle(P.thread);
-    if (ended) CloseHandle(P.event);
-#else
-    pthread_cond_signal(&P.cond);
-    pthread_join(P.thread, NULL);
     bool ended = true;
+#ifdef _WIN32
+    /* a decoder may be slow to give up */
+    ended = WaitForMultipleObjects((DWORD)P.workers, P.threads, TRUE, 2000) == WAIT_OBJECT_0;
+    for (int i = 0; i < P.workers; i++) CloseHandle(P.threads[i]);
+#else
+    for (int i = 0; i < P.workers; i++) pthread_join(P.threads[i], NULL);
 #endif
-    if (!ended) return;   /* the thread still uses the queue: leave it to the process's end */
+    if (!ended) return;   /* a thread still uses the queue: leave it to the process's end */
     while (P.queued) free(P.queue[--P.queued].path);
+    while (P.nlater) free(P.later[--P.nlater].path);
     take_results();
     while (P.count) {
         drop(P.count - 1);

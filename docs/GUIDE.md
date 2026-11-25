@@ -296,10 +296,12 @@ magnifies the text under the mouse. `.image_fit = BARE_FIT_COVER` fills the box 
 `object-fit: cover`.
 
 **Pictures from files, many of them, or moving.** For a gallery, call `bare_picture(path, .width, .height)` every
-frame instead, like any other part of the UI. It loads on a background thread (0 until then), shrinks to the size you
-ask (cropped from the middle), keeps it while you draw it and frees it 10 s after you stop. GIFs play every frame;
-on Windows it also reads WebP, HEIC and the rest WIC knows, and shows a few looping seconds of a video (Media
-Foundation). `.still = true` keeps only the first frame.
+frame instead, like any other part of the UI. It loads on background threads (0 until then), shrinks to the size you
+ask (cropped from the middle), keeps it while you draw it and frees it 10 s after you stop. Everything shows something
+quickly: small files first, then big ones and videos (on Windows, Explorer's cached thumbnail shows meanwhile, and a
+moving picture's first frame before the rest). GIFs play every frame; on Windows it also reads WebP, HEIC and the rest
+WIC knows, and shows a few looping seconds of a video (Media Foundation, decoded and shrunk on the GPU).
+`.still = true` keeps only the first frame.
 
 ```c
 bare_box(.width = 240, .height = 135, .radius = 12, .image = bare_picture(path, .width = 480, .height = 270));
