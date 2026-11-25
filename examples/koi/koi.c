@@ -248,7 +248,7 @@ static void update_koi(double dt) {
         double hx = cos(k->a), hy = sin(k->a);
         double sx = hx, sy = hy, sm = 1;
         double w = sin(P.clock * 0.23 + k->seed * 40) * 0.9 + sin(P.clock * 0.61 + k->seed * 91) * 0.5;
-        sx += -hy * w * 0.45, sy += hx * w * 0.45;   /* half the page's wander: steadier courses */
+        sx += -hy * w * 0.45, sy += hx * w * 0.45;
         double m = 0.1 + L * 0.6;
         if (k->x < m) sx += 3 * pow((m - k->x) / m, 2);
         if (k->x > P.aspect - m) sx -= 3 * pow((k->x - P.aspect + m) / m, 2);
@@ -298,8 +298,7 @@ static void update_koi(double dt) {
         k->burst = fmax(0, k->burst - dt * 1.4);
         double da = atan2(sy, sx) - k->a;
         da = atan2(sin(da), cos(da));
-        /* the page turns at 1.3 (+1.8) rad/s whatever the speed, so a slow koi circles tighter than its
-           own length and curls up: here the turning circle stays at least 1.2 body lengths across */
+        /* the turning circle stays at least 1.2 body lengths across, so a slow koi doesn't curl up */
         double max_turn = fmin(0.8 + (sm > 1.5 ? 1.2 : 0), fmax(0.2, k->v / (1.2 * L))) * dt;
         double turn = clampd(da, -max_turn, max_turn);
         k->a += turn;
