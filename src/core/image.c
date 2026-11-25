@@ -18,7 +18,9 @@ static const BareAllocator *stbi_alloc(void) {
 #define STBI_ONLY_BMP
 #define STBI_ONLY_GIF
 #define STBI_ONLY_TGA
-#define STBI_WINDOWS_UTF8
+#ifdef _WIN32
+#define STBI_WINDOWS_UTF8   /* elsewhere its declaration has no body: an unused-function error */
+#endif
 #define STBI_MALLOC(sz)        bare__heap_alloc(stbi_alloc(), (sz))
 #define STBI_REALLOC(p, newsz) bare__heap_realloc(stbi_alloc(), (p), (newsz))
 #define STBI_FREE(p)           bare__heap_free(stbi_alloc(), (p))
