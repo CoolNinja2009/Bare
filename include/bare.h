@@ -870,6 +870,10 @@ typedef struct BareWindowOptions {
     bool frameless;
     int min_width, min_height;  /* logical pixels (0 = no limit) */
     float zoom;                 /* everything this much bigger (0 = 1): 0.8 is the same layout in a window 80% the size */
+    /* Another program's window to live inside (Windows: an HWND), filling it
+     * and following its size; no title bar, never in the taskbar. A live
+     * wallpaper host passes one (Screen+: --screenplus-parent). 0 = none. */
+    uintptr_t parent;
 } BareWindowOptions;
 #define bare_window_with(...) bare_window_with_(&(BareWindowOptions){ __VA_ARGS__ })
 bool  bare_window_with_(const BareWindowOptions *options);

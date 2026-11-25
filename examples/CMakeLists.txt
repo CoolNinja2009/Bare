@@ -36,3 +36,17 @@ target_compile_options(singularity PRIVATE ${BARE_WARNINGS})
 bare_add_shaders(singularity OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/singularity/generated/singularity_shaders.h SOURCES
     singularity/shaders/scene.glsl singularity/shaders/down.glsl singularity/shaders/up.glsl
     singularity/shaders/comp.glsl singularity/shaders/probe.glsl)
+
+# Aurora: Screen+'s "Aurora" wallpaper as a program (soft light, stars, the
+# cursor gathers the light); a Screen+ app wallpaper with a Customise panel.
+add_executable(aurora aurora/aurora.c)
+target_link_libraries(aurora PRIVATE bare)
+target_compile_options(aurora PRIVATE ${BARE_WARNINGS})
+if(WIN32)
+    set_target_properties(aurora PROPERTIES WIN32_EXECUTABLE TRUE)   # no console window behind the wallpaper
+    if(MSVC)
+        target_link_options(aurora PRIVATE /ENTRY:mainCRTStartup)    # still main(), not WinMain
+    endif()
+endif()
+bare_add_shaders(aurora OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/aurora/generated/aurora_shaders.h SOURCES
+    aurora/shaders/aurora.glsl)

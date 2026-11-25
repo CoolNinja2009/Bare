@@ -1,0 +1,65 @@
+{
+  "hint": {
+    "type": "label",
+    "value": "Move the cursor to gather the light. Click for a shooting star."
+  },
+  "palette": {
+    "type": "dropdown",
+    "value": 0,
+    "text": "Colours",
+    "items": ["Aurora", "Northern lights", "Sunset", "Ice", "Ember"]
+  },
+  "speed": {
+    "type": "slider",
+    "value": 100,
+    "min": 25,
+    "max": 400,
+    "step": 5,
+    "text": "Drift speed"
+  },
+  "glow": {
+    "type": "slider",
+    "value": 100,
+    "min": 25,
+    "max": 160,
+    "step": 5,
+    "text": "Glow"
+  },
+  "brightness": {
+    "type": "slider",
+    "value": 100,
+    "min": 40,
+    "max": 160,
+    "step": 5,
+    "text": "Brightness"
+  },
+  "stars": {
+    "type": "slider",
+    "value": 100,
+    "min": 0,
+    "max": 300,
+    "step": 10,
+    "text": "Stars"
+  },
+  "twinkle": {
+    "type": "checkbox",
+    "value": true,
+    "text": "Stars twinkle"
+  },
+  "shooting": {
+    "type": "checkbox",
+    "value": true,
+    "text": "Shooting stars"
+  },
+  "follow": {
+    "type": "checkbox",
+    "value": true,
+    "text": "Light follows the cursor"
+  },
+  "fps": {
+    "type": "dropdown",
+    "value": 0,
+    "text": "Frame rate",
+    "items": ["30 fps", "60 fps", "Display refresh rate"]
+  }
+}

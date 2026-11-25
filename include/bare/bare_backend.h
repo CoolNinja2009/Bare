@@ -66,6 +66,9 @@ typedef struct BarePlatform {
      * BARE_EVENT_RESIZE as the size changes and BARE_EVENT_EXPOSE when a frame
      * is due, so the app can keep drawing. NULL if not needed. */
     void   (*set_live)(void *self, void (*live)(void *user, const BareEvent *e), void *user);
+    /* Puts the (still hidden) window inside another program's window, filling
+     * it (bare_window_with .parent). NULL if the platform can't. */
+    bool   (*set_parent)(void *self, uintptr_t parent);
     /* Platforms that own the main loop set this; others leave it NULL. */
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);
 } BarePlatform;

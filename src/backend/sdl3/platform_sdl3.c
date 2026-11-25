@@ -111,6 +111,28 @@ static bool open_window(void *self, int width, int height, const char *title, un
 
 static void show_window(void *self) { (void)self; SDL_ShowWindow(sdl.window); }
 
+/* A child of another process's window (a wallpaper host): no frame, the
+ * host's whole client area. The host resizes it; SDL sees WM_SIZE as usual. */
+static bool set_parent(void *self, uintptr_t parent) {
+    (void)self;
+#ifdef _WIN32
+    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(sdl.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    HWND host = (HWND)parent;
+    if (!hwnd || !IsWindow(host)) return false;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, 0);
+    if (!SetParent(hwnd, host)) return false;
+    RECT rc;
+    GetClientRect(host, &rc);
+    SetWindowPos(hwnd, HWND_TOP, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
+#else
+    (void)parent;
+    return false;
+#endif
+}
+
 static void close_window(void *self) {
     (void)self;
 #ifdef _WIN32
@@ -532,6 +554,7 @@ BarePlatform bare__sdl3_platform(void) {
         .set_min_size = set_min_size,
         .set_drag_query = set_drag_query,
         .set_live = set_live,
+        .set_parent = set_parent,
         .backdrop = backdrop,
         .run = NULL,
     };

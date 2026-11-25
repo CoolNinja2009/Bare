@@ -45,7 +45,7 @@ static int drag_query(void *user, float x, float y) {
     return app.ctx && bare_ctx_window_drag(app.ctx, (BareVec2){ x / app.zoom, y / app.zoom });
 }
 
-static bool window_open(int width, int height, const char *title, unsigned flags) {
+static bool window_open(int width, int height, const char *title, unsigned flags, uintptr_t parent) {
     if (app.open) return true;
     if (!(app.zoom > 0)) app.zoom = 1;
     app.platform = bare__sdl3_platform();
@@ -53,6 +53,11 @@ static bool window_open(int width, int height, const char *title, unsigned flags
     if (!app.platform.open_window(app.platform.self, (int)(width * app.zoom + 0.5f), (int)(height * app.zoom + 0.5f),
                                   title, flags)) return false;
     if (app.platform.set_drag_query) app.platform.set_drag_query(app.platform.self, drag_query, NULL);
+    /* Before the renderer, so the swap chain starts at the host's size. */
+    if (parent && (!app.platform.set_parent || !app.platform.set_parent(app.platform.self, parent))) {
+        app.platform.close_window(app.platform.self);
+        return false;
+    }
     if (!app.renderer.init(app.renderer.self, &app.platform)) {
         app.platform.close_window(app.platform.self);
         return false;
@@ -85,17 +90,17 @@ static bool window_open(int width, int height, const char *title, unsigned flags
 }
 
 bool bare_window(int width, int height, const char *title) {
-    return window_open(width, height, title, 0);
+    return window_open(width, height, title, 0, 0);
 }
 
 bool bare_window_transparent(int width, int height, const char *title) {
-    return window_open(width, height, title, BARE_WINDOW_TRANSPARENT);
+    return window_open(width, height, title, BARE_WINDOW_TRANSPARENT, 0);
 }
 
 bool bare_window_with_(const BareWindowOptions *o) {
     unsigned flags = (o->transparent ? BARE_WINDOW_TRANSPARENT : 0) | (o->frameless ? BARE_WINDOW_FRAMELESS : 0);
     if (!app.open) app.zoom = o->zoom > 0 ? o->zoom : 1;
-    if (!window_open(o->width > 0 ? o->width : 1280, o->height > 0 ? o->height : 800, o->title, flags)) return false;
+    if (!window_open(o->width > 0 ? o->width : 1280, o->height > 0 ? o->height : 800, o->title, flags, o->parent)) return false;
     if ((o->min_width > 0 || o->min_height > 0) && app.platform.set_min_size)
         app.platform.set_min_size(app.platform.self, (int)(o->min_width * app.zoom + 0.5f),
                                   (int)(o->min_height * app.zoom + 0.5f));
