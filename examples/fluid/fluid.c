@@ -1,20 +1,23 @@
-/* fluid.c: a GPU fluid simulation on Bare canvases, with a settings panel
- * made of Bare boxes.
+/* fluid.c: a GPU fluid simulation on Bare canvases; Screen+'s "Fluids" wallpaper.
  *
  * A port of WebGL Fluid Simulation by Pavel Dobryakov
  * (github.com/PavelDoGreat/WebGL-Fluid-Simulation, MIT licence, (c) 2017
- * Pavel Dobryakov) with the defaults of its Lively Wallpaper edition. The
+ * Pavel Dobryakov) with the settings of its Lively Wallpaper edition. The
  * shaders in shaders/ are the original ones in GLSL 450.
  *
- * Move the mouse to stir. Space: a burst of colour. P: pause. Tab: settings.
+ * Move the mouse to stir. Space: a burst of colour.
+ *
+ * A Screen+ app wallpaper: settings are the Customise panel (LivelyProperties.json
+ * beside the exe), sent by Screen+ on stdin (see ../screenplus/screenplus_wallpaper.h);
+ * by hand they're arguments: fluid quality=1 vorticity=40 bgColor=#102030
  *
  * Once the fluid has settled the app stops simulating and Bare sleeps, so it
  * costs no CPU or GPU until you touch it again; a browser keeps going forever.
- *
- * The settings panel (top right) is frosted glass with text on it, as in the
- * original's controls: quality bars, toggles and sliders. */
+ * While Screen+ has it paused it draws nothing. Not ported: the audio
+ * visualiser and the background picture. */
 #include "bare.h"
 #include "fluid_shaders.h"
+#include "../screenplus/screenplus_wallpaper.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +28,8 @@ typedef struct Settings {
     int quality, sim_quality;     /* 0..3 (low to high) */
     float splat_radius, curl, density_dissipation, velocity_dissipation, pressure;
     float bloom_intensity, bloom_threshold, sunrays_weight;
-    bool shading, colorful, bloom, sunrays, paused;
+    bool shading, colorful, bloom, sunrays, random_splats;
+    BareColor background;
 } Settings;
 
 static Settings cfg = {
@@ -33,7 +37,40 @@ static Settings cfg = {
     .splat_radius = 0.2f, .curl = 20, .density_dissipation = 1, .velocity_dissipation = 1, .pressure = 0.1f,
     .bloom_intensity = 0.15f, .bloom_threshold = 0.75f, .sunrays_weight = 0.4f,
     .shading = true, .colorful = true, .bloom = true, .sunrays = true,
+    .background = { 0, 0, 0, 255 },
 };
+
+static int hex(char c) {
+    c = (char)(c >= 'A' && c <= 'F' ? c + 32 : c);
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+/* The page's Lively properties, scaled as its livelyPropertyListener does. */
+static void set_property(const SpMessage *m) {
+    const char *n = m->name;
+    double v = sp_num(m);
+    if (!strcmp(n, "quality")) cfg.quality = 3 - (int)fmin(3, fmax(0, v));   /* High .. Very low */
+    else if (!strcmp(n, "simResolution")) cfg.sim_quality = (int)fmin(3, fmax(0, v));
+    else if (!strcmp(n, "densityDiffusion")) cfg.density_dissipation = (float)(v / 10);
+    else if (!strcmp(n, "velocityDiffusion")) cfg.velocity_dissipation = (float)(v / 100);
+    else if (!strcmp(n, "pressure")) cfg.pressure = (float)(v / 100);
+    else if (!strcmp(n, "vorticity")) cfg.curl = (float)v;
+    else if (!strcmp(n, "splatRadius")) cfg.splat_radius = (float)(v / 100);
+    else if (!strcmp(n, "shading")) cfg.shading = sp_bool(m);
+    else if (!strcmp(n, "colorful")) cfg.colorful = sp_bool(m);
+    else if (!strcmp(n, "bloomEnable")) cfg.bloom = sp_bool(m);
+    else if (!strcmp(n, "bloomIntensity")) cfg.bloom_intensity = (float)(v / 100);
+    else if (!strcmp(n, "bloomThreshold")) cfg.bloom_threshold = (float)(v / 100);
+    else if (!strcmp(n, "sunRaysEnable")) cfg.sunrays = sp_bool(m);
+    else if (!strcmp(n, "sunRaysWeight")) cfg.sunrays_weight = (float)(v / 100);
+    else if (!strcmp(n, "randomSplats")) cfg.random_splats = sp_bool(m);
+    else if (!strcmp(n, "bgColor") && m->value[0] == '#' && strlen(m->value) == 7) {
+        int c[6];
+        for (int i = 0; i < 6; i++)
+            if ((c[i] = hex(m->value[1 + i])) < 0) return;
+        cfg.background = BARE_RGBA(c[0] * 16 + c[1], c[2] * 16 + c[3], c[4] * 16 + c[5], 255);
+    }
+}
 
 static const int DYE_RES[4] = { 128, 256, 512, 1024 };
 static const int SIM_RES[4] = { 32, 64, 128, 256 };
@@ -267,121 +304,11 @@ static double settle_seconds(void) {
     return t;
 }
 
-/* ---- settings panel: plain Bare boxes ------------------------------------ */
-
-static BareColor dim(int a) { return BARE_RGBA(255, 255, 255, a); }
-
-static float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-
-/* A label on the left of a line; the control fills the rest. */
-static void label(const char *text) {
-    bare_column(.width = 112) { bare_text(text, .size = 13); }
-}
-
-static bool toggle(bool on, BareColor accent) {
-    bare_row(.width = 36, .height = 20, .radius = 10, .padding = 3, .cursor = BARE_CURSOR_HAND,
-             .justify = on ? BARE_END : BARE_START, .color = on ? accent : dim(40),
-             .hover = { .color = on ? accent : dim(70) }) {
-        if (bare_this().clicked) on = !on;
-        bare_box(.width = 14, .height = 14, .radius = 7, .color = BARE_WHITE, .shadow = BARE_SHADOW_SMALL);
-    }
-    return on;
-}
-
-/* A track with a knob; drag anywhere on it. */
-static float slider(float v, float lo, float hi, BareColor accent) {
-    bare_row(.width = BARE_GROW, .height = 20, .align = BARE_CENTER, .cursor = BARE_CURSOR_HAND) {
-        BareState s = bare_this();
-        float track = s.rect.w - 14;
-        if (s.pressed && track > 0) v = lo + clamp01((bare_mouse().x - s.rect.x - 7) / track) * (hi - lo);
-        float fill = clamp01((v - lo) / (hi - lo)) * track;
-        bare_box(.width = fill > 0 ? fill : BARE_ZERO, .height = 4, .radius = 2, .color = accent);
-        bare_box(.width = 14, .height = 14, .radius = 7, .color = BARE_WHITE, .shadow = BARE_SHADOW_SMALL,
-                 .hover = { .scale = 1.2f });
-        bare_box(.width = BARE_GROW, .height = 4, .radius = 2, .color = dim(50));
-    }
-    return v;
-}
-
-/* Four bars of rising height, like a signal meter; click one to pick it. */
-static int bars(int sel, BareColor accent) {
-    bare_row(.gap = 4, .align = BARE_END) {
-        for (int i = 0; i < 4; i++) {
-            bare_column(.width = 14, .height = 24, .justify = BARE_END, .cursor = BARE_CURSOR_HAND) {
-                if (bare_this().clicked) sel = i;
-                bare_box(.width = BARE_GROW, .height = 9.0f + 5.0f * (float)i, .radius = 3,
-                         .color = i <= sel ? accent : dim(45));
-            }
-        }
-    }
-    return sel;
-}
-
-/* A line of the panel: a label, then a slider. */
-static void setting(const char *name, float *v, float lo, float hi, BareColor color) {
-    bare_row(.width = BARE_GROW, .align = BARE_CENTER) {
-        label(name);
-        *v = slider(*v, lo, hi, color);
-    }
-}
-
-/* A label and a switch at the right end of the line. */
-static bool switch_line(const char *name, bool on, BareColor color) {
-    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
-        label(name);
-        on = toggle(on, color);
-    }
-    return on;
-}
-
-/* Returns true if anything changed. */
-static bool panel(void) {
-    static const BareColor pink = { 255, 95, 160, 255 }, amber = { 255, 180, 60, 255 }, cyan = { 70, 200, 255, 255 },
-                           violet = { 160, 120, 255, 255 }, green = { 90, 220, 140, 255 }, red = { 255, 90, 80, 255 },
-                           sky = { 120, 170, 255, 255 }, gold = { 250, 220, 120, 255 };
-    Settings old;
-    memcpy(&old, &cfg, sizeof cfg);
-
-    bare_row(.width = BARE_GROW, .justify = BARE_SPACE_BETWEEN, .align = BARE_CENTER) {
-        bare_text("Settings", .size = 16);
-        bare_text("Tab hides", .size = 12, .color = dim(110));
-    }
-    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
-        label("Quality");
-        cfg.quality = bars(cfg.quality, pink);
-    }
-    bare_row(.width = BARE_GROW, .align = BARE_CENTER, .justify = BARE_SPACE_BETWEEN) {
-        label("Sim resolution");
-        cfg.sim_quality = bars(cfg.sim_quality, cyan);
-    }
-    bare_box(.width = BARE_GROW, .height = 1, .color = dim(30));
-    cfg.shading = switch_line("Shading", cfg.shading, sky);
-    cfg.colorful = switch_line("Colorful", cfg.colorful, pink);
-    cfg.bloom = switch_line("Bloom", cfg.bloom, amber);
-    cfg.sunrays = switch_line("Sunrays", cfg.sunrays, gold);
-    cfg.paused = switch_line("Paused (P)", cfg.paused, red);
-    bare_box(.width = BARE_GROW, .height = 1, .color = dim(30));
-    setting("Splat radius", &cfg.splat_radius, 0.01f, 1, green);
-    setting("Vorticity", &cfg.curl, 0, 50, violet);
-    setting("Density fade", &cfg.density_dissipation, 0, 4, pink);
-    setting("Velocity fade", &cfg.velocity_dissipation, 0, 4, cyan);
-    setting("Pressure", &cfg.pressure, 0, 1, sky);
-    setting("Bloom intensity", &cfg.bloom_intensity, 0.1f, 2, amber);
-    setting("Bloom threshold", &cfg.bloom_threshold, 0, 1, amber);
-    setting("Sunray weight", &cfg.sunrays_weight, 0.3f, 1, gold);
-    return memcmp(&old, &cfg, sizeof cfg) != 0;
-}
-
 /* ---- the app ------------------------------------------------------------- */
 
-static void hamburger(void) {
-    bare_column(.gap = 4) {
-        for (int i = 0; i < 3; i++) bare_box(.width = 16, .height = 2, .radius = 1, .color = BARE_WHITE);
-    }
-}
-
-int main(void) {
-    bare_window(1280, 720, "Bare: fluid");
+int main(int argc, char **argv) {
+    SpArgs sa = sp_args(argc, argv);
+    if (!bare_window_with(.width = 1280, .height = 720, .title = "Fluids", .parent = sa.parent)) return 1;
     fx.curl = bare_shader(&curl_shader);
     fx.vorticity = bare_shader(&vorticity_shader);
     fx.divergence = bare_shader(&divergence_shader);
@@ -397,16 +324,20 @@ int main(void) {
     fx.blur = bare_shader(&blur_shader);
     fx.display = bare_shader(&display_shader);
 
-    bool show_panel = true, started = false;
-    double last_active = 0, last_pointer_reset = -10, color_timer = 0;
+    bool started = false, paused = false;
+    double last_active = 0, last_pointer_reset = -10, color_timer = 0, next_random = 3.5;
     Rgb pointer_color = random_color();
     BareVec2 last_mouse = bare_mouse();
-    BareState canvas = { 0 };
 
     while (bare_frame()) {
+        bool dirty = false;   /* the picture needs redrawing even if the fluid is still */
+        SpMessage msg;
+        while (sp_next(&msg)) {
+            if (msg.kind == SP_PROPERTY) set_property(&msg), dirty = true;
+            else if (msg.kind == SP_PAUSE) paused = sp_bool(&msg);
+        }
         double now = bare_time();
         float dt = fminf(bare_dt(), 1.0f / 60.0f);
-        bool dirty = false;   /* the picture needs redrawing even if the fluid is still */
 
         /* Targets follow the window's size in physical pixels. */
         BareVec2 win = bare_window_size();
@@ -424,29 +355,18 @@ int main(void) {
             last_active = now;
         }
 
-        if (bare_key_pressed(BARE_KEY_TAB)) show_panel = !show_panel;
-        if (bare_key_pressed(BARE_KEY_P)) cfg.paused = !cfg.paused, dirty = true;
-        if (bare_key_pressed(BARE_KEY_SPACE)) random_splats(5 + rand() % 20), last_active = now;
+        /* The fluid fills the window, over the background colour. */
+        BareState canvas = bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = display.image,
+                                    .color = cfg.background);
+        if (paused) {   /* the picture stays as it is; nothing runs until Screen+ resumes it */
+            bare_continuous(false);
+            continue;
+        }
 
-        /* The fluid fills the window; the panel floats over it. */
-        bare_stack(.width = BARE_GROW, .height = BARE_GROW) {
-            canvas = bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = display.image, .color = BARE_BLACK);
-            bare_column(.width = BARE_GROW, .height = BARE_GROW, .padding = 20, .gap = 10, .align = BARE_END,
-                        .passthrough = true) {
-                bare_column(.width = 44, .height = 44, .radius = 22, .align = BARE_CENTER, .justify = BARE_CENTER,
-                            .glass = BARE_GLASS_FROSTED, .cursor = BARE_CURSOR_HAND,
-                            .hover = { .scale = 1.08f }, .press = { .scale = 0.94f }) {
-                    if (bare_this().clicked) show_panel = !show_panel;
-                    hamburger();
-                }
-                if (show_panel) {
-                    bare_column(.width = 300, .padding = 20, .gap = 10, .radius = 24,
-                                .glass = BARE_GLASS_FROSTED, .color = BARE_RGBA(16, 18, 26, 90),
-                                .text_color = BARE_RGBA(255, 255, 255, 225)) {
-                        if (panel()) dirty = true;
-                    }
-                }
-            }
+        if (bare_key_pressed(BARE_KEY_SPACE)) random_splats(5 + rand() % 20), last_active = now;
+        if (cfg.random_splats && now >= next_random) {   /* the page's 3.5 s timer */
+            random_splats(5 + rand() % 20), last_active = now;
+            next_random = now + 3.5;
         }
 
         /* Stir with the mouse, like the original: every move splats, and the
@@ -473,10 +393,11 @@ int main(void) {
         }
 
         /* Simulate until the fluid settles, then let Bare sleep. */
-        bool running = !cfg.paused && now - last_active < settle_seconds();
+        bool running = now - last_active < settle_seconds();
         if (running) step(dt);
         if (running || dirty || now == last_active) render();
         bare_continuous(running);
+        if (!running && cfg.random_splats) bare_wake_in((float)fmax(0, next_random - now));
     }
     bare_quit();
 }

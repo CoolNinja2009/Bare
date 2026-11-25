@@ -23,7 +23,7 @@ bare_box(.width = 520, .height = 96, .radius = 48, .glass = BARE_GLASS);
 ```
 
 And canvases for your own shaders, like `<canvas>` + WebGL: [examples/fluid](examples/fluid) is a GPU fluid
-simulation with a frosted settings panel built from Bare boxes.
+simulation, and a Screen+ live wallpaper.
 
 And text editing built in, from a one-line field to a code editor with multiple carets and find / replace:
 [examples/write](examples/write) is a Markdown and plain text editor on liquid glass, in under 1,000 lines of C.

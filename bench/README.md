@@ -6,8 +6,7 @@ loop or the core, and update the numbers below.
 
 ## Fluids: Bare vs Microsoft Edge
 
-The same app twice: [examples/fluid](../examples/fluid) (Bare canvases, GPU passes, a Bare
-settings panel) and the WebGL original it was ported from (Pavel Dobryakov's WebGL Fluid
+The same app twice: [examples/fluid](../examples/fluid) (Bare canvases, GPU passes) and the WebGL original it was ported from (Pavel Dobryakov's WebGL Fluid
 Simulation, as packaged for Lively Wallpaper in ScreenPlus's samples). Both run the same shaders at
 the same resolutions (dye 1024, simulation 128, bloom 256, sunrays 196) with Lively's defaults.
 
@@ -26,7 +25,7 @@ simulation, and over Edge it stirs the fluid.
 
 - **Bare active:** `fluid_bench`, which is `examples/fluid/fluid.c` unchanged plus
   [fluid_driver.h](fluid_driver.h) force-included. It moves the mouse every frame so the fluid never
-  settles, hides the panel (the browser version has none), and shows fps in the title.
+  settles, and shows fps in the title.
 - **Bare idle:** the real `fluid.exe`, 15 s after launch, once the fluid has settled and Bare sleeps.
 - **Edge:** a copy of the sample in `%TEMP%\bare-bench` with Lively's defaults applied through
   `livelyPropertyListener` (as Lively does), a frame counter in `document.title`, and a `?stir` mode

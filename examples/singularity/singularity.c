@@ -12,8 +12,9 @@
  *   click  drops a star in: it spirals down, is torn into a streak and lights the disk up
  *   wheel  zoom
  *
- * Settings are the page's Lively properties, given as arguments:
- *   singularity quality=2 palette=3 bodies=3 cursorLens=false
+ * A Screen+ app wallpaper: settings are the Customise panel (LivelyProperties.json
+ * beside the exe), sent by Screen+ on stdin (see ../screenplus/screenplus_wallpaper.h);
+ * by hand they're arguments: singularity quality=2 palette=3 bodies=3 cursorLens=false
  *
  * Four passes a frame, as in the page: the ray tracer draws into a smaller HDR
  * buffer and, at the same time, a 32-bit buffer of how far each ray was bent
@@ -28,10 +29,11 @@
  * driven by the same clock (BARE_FIXED_DT), shows the same frames.
  *
  * Not ported: music reaction (the page gets audio levels from Lively; Bare
- * has no audio input), prefers-reduced-motion, and pausing when the host hides
- * the wallpaper (Bare already stops drawing while minimised). */
+ * has no audio input) and prefers-reduced-motion. While Screen+ has it paused
+ * it draws nothing. */
 #include "bare.h"
 #include "singularity_shaders.h"
+#include "../screenplus/screenplus_wallpaper.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -51,8 +53,8 @@ static struct {
           .size = 100, .tilt = 10, .spin = 100, .brightness = 100, .nebula = 60,
           .parallax = true, .cursor_lens = true, .audio = true };
 
-/* "name=value", as livelyPropertyListener takes them. */
-static void set_property(const char *arg) {
+/* A property by name, as livelyPropertyListener takes them. */
+static void set_property(const SpMessage *m) {
     static const struct { const char *name; char kind; void *at; } props[] = {
         { "quality", 'i', &cfg.quality }, { "fps", 'i', &cfg.fps }, { "position", 'i', &cfg.position },
         { "palette", 'i', &cfg.palette }, { "bodies", 'i', &cfg.bodies }, { "size", 'd', &cfg.size },
@@ -60,11 +62,9 @@ static void set_property(const char *arg) {
         { "nebula", 'd', &cfg.nebula }, { "parallax", 'b', &cfg.parallax },
         { "cursorLens", 'b', &cfg.cursor_lens }, { "audio", 'b', &cfg.audio },
     };
-    const char *eq = strchr(arg, '=');
-    if (!eq) return;
     for (size_t i = 0; i < sizeof props / sizeof props[0]; i++) {
-        if (strlen(props[i].name) != (size_t)(eq - arg) || strncmp(arg, props[i].name, (size_t)(eq - arg))) continue;
-        const char *v = eq + 1;
+        if (strcmp(m->name, props[i].name)) continue;
+        const char *v = m->value;
         char *end;
         double d = strtod(v, &end);
         bool number = end != v && *end == 0;
@@ -599,14 +599,14 @@ static void draw(void) {
 /* ---- the app ------------------------------------------------------------------- */
 
 int main(int argc, char **argv) {
-    for (int i = 1; i < argc; i++) set_property(argv[i]);
+    SpArgs sa = sp_args(argc, argv);
     const char *s = getenv("SINGULARITY_SEED");
     seeded = s && *s;
     if (seeded) seed = (uint32_t)strtoul(s, NULL, 10);
     else srand((unsigned)time(NULL));
     next_body = 6 + random01() * 6;   /* the page's first draw of Math.random */
 
-    if (!bare_window(1280, 720, "Singularity")) return 1;
+    if (!bare_window_with(.width = 1280, .height = 720, .title = "Singularity", .parent = sa.parent)) return 1;
     bare_background(BARE_BLACK);
     fx.scene = bare_shader(&scene_shader);
     if (getenv("SINGULARITY_DXBC")) {   /* TEMPORARY: try another DXBC for the scene */
@@ -635,8 +635,13 @@ int main(int argc, char **argv) {
 
     double prev = -1, last_draw = -1e9;
     BareVec2 last_mouse = { -1e9, -1e9 };
-    bool was_pressed = false;
+    bool was_pressed = false, paused = false;
     while (bare_frame()) {
+        SpMessage msg;
+        while (sp_next(&msg)) {
+            if (msg.kind == SP_PROPERTY) set_property(&msg);
+            else if (msg.kind == SP_PAUSE) paused = sp_bool(&msg);
+        }
         double now = bare_time() * 1000;
         BareVec2 win = bare_window_size();
         float scale = bare_pixel_scale();
@@ -648,6 +653,11 @@ int main(int argc, char **argv) {
 
         /* The page: one element filling the window, showing the composite. */
         BareState page = bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = display, .color = BARE_BLACK);
+        if (paused) {   /* the picture stays as it is; nothing runs until Screen+ resumes it */
+            bare_continuous(false);
+            prev = -1;   /* and the simulation picks up where it stopped */
+            continue;
+        }
 
         /* Input, as the page's listeners see it. */
         BareVec2 m = bare_mouse();

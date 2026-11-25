@@ -787,8 +787,7 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
   your app costs nothing, which a page's endless `requestAnimationFrame` loop never does.
 - std140 in C: floats and `vec2`s pack as in C, but a `vec3` / `vec4` starts on a 16-byte boundary: use `float[4]`.
 
-`examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes with a settings panel made of Bare boxes,
-and `bench/` measures it against the same simulation running in Edge.
+`examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes (Screen+'s Fluids wallpaper), and `bench/` measures it against the same simulation running in Edge.
 
 ## 14. CSS to Bare cheat sheet
 

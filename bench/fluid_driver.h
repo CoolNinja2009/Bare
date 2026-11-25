@@ -1,8 +1,7 @@
 /* fluid_driver.h: force-included into examples/fluid/fluid.c to build
  * fluid_bench (see CMakeLists.txt), so the benchmark measures the real example
  * unchanged. Each frame it moves the mouse along a fixed path (the fluid never
- * settles), hides the settings panel on frame 2, and writes the frame rate
- * into the window title, where bench.ps1 reads it. */
+ * settles) and writes the frame rate into the window title, where bench.ps1 reads it. */
 #ifndef BARE_FLUID_DRIVER_H
 #define BARE_FLUID_DRIVER_H
 
@@ -15,17 +14,7 @@ static void bench_drive(void) {
     static int frame, frames;
     static double last;
     SDL_Event e;
-    if (++frame == 2) {   /* Tab hides the panel: the browser version has none */
-        SDL_zero(e);
-        e.type = SDL_EVENT_KEY_DOWN;
-        e.key.key = SDLK_TAB;
-        e.key.scancode = SDL_SCANCODE_TAB;
-        e.key.down = true;
-        SDL_PushEvent(&e);
-        e.type = SDL_EVENT_KEY_UP;
-        e.key.down = false;
-        SDL_PushEvent(&e);
-    }
+    frame++;
     /* The same path the page's ?stir mode follows (prepared by bench.ps1). */
     float a = (float)frame * 0.05f;
     SDL_zero(e);
