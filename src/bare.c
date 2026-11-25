@@ -27,6 +27,9 @@ static struct {
     BareId        chosen_id;          /* a file dialog's answer, shown for one frame */
     char          chosen[4096];
     int           chosen_frames;
+    void        (*run_frame)(void *user);   /* bare_run's frame, drawn from move/resize loops too */
+    void         *run_user;
+    bool          in_live;
     BareImage     backdrop;           /* bare_window_backdrop's image */
     int           backdrop_w, backdrop_h;
 } app;
@@ -252,6 +255,23 @@ const char *bare_file_chosen(BareId id) {
     return id && app.chosen_frames > 0 && app.chosen_id == id ? app.chosen : NULL;
 }
 
+/* A frame from inside Windows' move/resize loop (bare_run only: the while-loop
+ * form is stuck in bare_frame's poll then). No new input arrives there. */
+static void live(void *user, const BareEvent *e) {
+    (void)user;
+    if (e->kind == BARE_EVENT_RESIZE) { apply(e); return; }
+    if (!app.run_frame || app.in_frame || app.in_live || app.quit || !app.shown) return;
+    app.in_live = true;
+    app.prev_time = app.time;
+    app.time = app.fixed_dt > 0 ? (double)app.frames * app.fixed_dt : app.platform.time(app.platform.self) - app.start;
+    app.frames++;
+    bare_ctx_begin(app.ctx, app.width, app.height, app.scale, app.time);
+    app.in_frame = true;
+    app.run_frame(app.run_user);
+    if (app.in_frame) end_frame();
+    app.in_live = false;
+}
+
 void bare_run(void (*frame)(void *user), void *user) {
     if (!app.open || !frame) return;
     if (app.platform.run) {
@@ -259,7 +279,12 @@ void bare_run(void (*frame)(void *user), void *user) {
         app.platform.run(app.platform.self, frame, user);
         return;
     }
+    app.run_frame = frame;
+    app.run_user = user;
+    if (app.platform.set_live) app.platform.set_live(app.platform.self, live, NULL);
     while (bare_frame()) frame(user);
+    if (app.platform.set_live) app.platform.set_live(app.platform.self, NULL, NULL);
+    app.run_frame = NULL;
 }
 
 void bare_quit(void) {

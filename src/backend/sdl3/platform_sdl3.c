@@ -30,6 +30,8 @@ typedef struct SdlPlatform {
     bool        frameless;
     int       (*drag_query)(void *user, float x, float y);
     void       *drag_user;
+    void      (*live)(void *user, const BareEvent *e);
+    void       *live_user;
 #ifdef _WIN32
     BareBackdrop *backdrop;
     bool        backdrop_failed;
@@ -413,6 +415,32 @@ static void set_min_size(void *self, int width, int height) {
     SDL_SetWindowMinimumSize(sdl.window, (int)(width / k), (int)(height / k));
 }
 
+/* SDL sends EXPOSED with data1 = 1 from a timer while Windows runs its modal
+ * move/size loop (SDL_OnWindowLiveResizeUpdate); an event watch sees it at once. */
+static bool SDLCALL live_watch(void *user, SDL_Event *e) {
+    (void)user;
+    if (!sdl.live) return true;
+    BareEvent out;
+    memset(&out, 0, sizeof out);
+    if (e->type == SDL_EVENT_WINDOW_EXPOSED && e->window.data1 == 1) {
+        out.kind = BARE_EVENT_EXPOSE;
+        sdl.live(sdl.live_user, &out);
+    } else if (e->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+        out.kind = BARE_EVENT_RESIZE;
+        window_size(NULL, &out.as.size.w, &out.as.size.h, &out.as.size.scale);
+        sdl.live(sdl.live_user, &out);
+    }
+    return true;
+}
+
+static void set_live(void *self, void (*live)(void *user, const BareEvent *e), void *user) {
+    (void)self;
+    if (live && !sdl.live) SDL_AddEventWatch(live_watch, NULL);
+    else if (!live && sdl.live) SDL_RemoveEventWatch(live_watch, NULL);
+    sdl.live = live;
+    sdl.live_user = user;
+}
+
 static void set_drag_query(void *self, int (*query)(void *user, float x, float y), void *user) {
     (void)self;
     sdl.drag_query = query;
@@ -502,6 +530,7 @@ BarePlatform bare__sdl3_platform(void) {
         .maximized = maximized,
         .set_min_size = set_min_size,
         .set_drag_query = set_drag_query,
+        .set_live = set_live,
         .backdrop = backdrop,
         .run = NULL,
     };

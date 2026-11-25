@@ -61,6 +61,11 @@ typedef struct BarePlatform {
      * first call; RGBA8 pixels when a new picture arrived since the last
      * call, else NULL (valid until the next call). NULL if unsupported. */
     const void *(*backdrop)(void *self, int *width, int *height);
+    /* Windows' move and resize loops block the event poll until the mouse is
+     * let go. The platform calls `live` from inside them (main thread) with
+     * BARE_EVENT_RESIZE as the size changes and BARE_EVENT_EXPOSE when a frame
+     * is due, so the app can keep drawing. NULL if not needed. */
+    void   (*set_live)(void *self, void (*live)(void *user, const BareEvent *e), void *user);
     /* Platforms that own the main loop set this; others leave it NULL. */
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);
 } BarePlatform;
