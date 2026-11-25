@@ -9,10 +9,11 @@
  * frame at a time, so a long one costs only the frames kept); the system's
  * decoders (src/backend/media.h) read the rest and video, on the GPU when
  * they can. Moving pictures keep their frames here and play by
- * bare_image_update while they are drawn; one not asked for in KEEP_S is
- * freed. */
+ * bare_image_update while they are drawn, stepping together on one
+ * PICTURE_FPS clock; one not asked for in KEEP_S is freed. */
 #include "bare.h"
 #include "backend/media.h"
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +55,7 @@
 #define MAX_PICTURES 512
 #define MAX_QUEUE    128
 #define KEEP_S       10.0            /* a picture not asked for this long is freed */
+#define PICTURE_FPS  24.0            /* moving pictures change frame at most this often, all at once */
 #define RETRY_S      5.0             /* one that couldn't be read is tried again after this */
 #define MAX_FILE     (256u << 20)    /* bigger files aren't read into memory */
 #define GIF_BUDGET   (512u << 20)    /* a GIF whose frames would take more shows its first */
@@ -574,7 +576,11 @@ static void play(Pic *p) {
         bare_image_update(p->image, p->rgba + (size_t)p->w * p->h * 4 * (size_t)k);
         p->shown = k;
     }
-    bare_wake_in((float)(end - at) / 1000.0f);
+    /* Every moving picture steps on one shared clock: a window of them would otherwise wake for each one's own
+     * frame times, out of step, and draw everything far more often than any of them moves. */
+    double now = bare_time(), next = now + (end - at) / 1000.0;
+    next = ceil(next * PICTURE_FPS) / PICTURE_FPS;
+    bare_wake_in((float)(next - now));
 }
 
 BareImage bare_picture_(const char *path, BarePictureOptions o) {
