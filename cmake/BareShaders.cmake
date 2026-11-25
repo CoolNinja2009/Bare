@@ -24,8 +24,11 @@
 #
 # A program (for bare_draw) is one file with both halves, each compiled with
 # BARE_VERTEX or BARE_FRAGMENT defined; BARE_PARAMS_SET is the params' set in
-# either. Vertex attributes are vec4 slots (declare float..vec4); the vertex
-# half reads no images.
+# either. Vertex attributes are vec4 slots (declare float..vec4). The vertex
+# half may read .inputs too, at set 0 (binding = the input's index).
+#
+# Shared code: `#extension GL_GOOGLE_include_directive : require` and
+# `#include "common.glsl"` (beside the shader; don't list it in SOURCES).
 #
 #   #version 450
 #   layout(set = BARE_PARAMS_SET, binding = 0) uniform Params { vec4 tint; };
@@ -54,10 +57,15 @@ function(bare_add_shaders target)
     target_include_directories(${target} PRIVATE ${out_dir})
 
     set(sources "")
+    set(deps "")
     foreach(src ${ARG_SOURCES})
         get_filename_component(abs ${src} ABSOLUTE)
         list(APPEND sources ${abs})
+        get_filename_component(dir ${abs} DIRECTORY)
+        file(GLOB near ${dir}/*.glsl)   # files they #include
+        list(APPEND deps ${near})
     endforeach()
+    list(REMOVE_DUPLICATES deps)
 
     if(BARE_GLSLC AND BARE_SHADERCROSS)
         string(REPLACE ";" "|" packed "${sources}")
@@ -66,7 +74,7 @@ function(bare_add_shaders target)
             COMMAND ${CMAKE_COMMAND} -DGLSLC=${BARE_GLSLC} -DSHADERCROSS=${BARE_SHADERCROSS}
                     "-DSOURCES=${packed}" -DOUT=${ARG_OUTPUT} -DWORK=${CMAKE_CURRENT_BINARY_DIR}/${target}_shaders
                     -P ${BARE_SHADER_SCRIPT}
-            DEPENDS ${sources} ${BARE_SHADER_SCRIPT}
+            DEPENDS ${sources} ${deps} ${BARE_SHADER_SCRIPT}
             COMMENT "Compiling ${target} shaders"
             VERBATIM)
         add_custom_target(${target}_shaders DEPENDS ${ARG_OUTPUT})

@@ -816,6 +816,8 @@ void main() { o_color = v_color; }
   of 16. Without `.vertices` the program makes its vertices from `gl_VertexIndex` (and `gl_InstanceIndex`).
 - A draw keeps what its triangles don't cover; `.clear = true, .clear_color = {...}` clears the targets first.
 - `.strip = true` for a triangle strip. `BARE_BLEND_ALPHA` is WebGL's `blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`.
+- The vertex half may read `.inputs` too (`layout(set = 0, binding = n)`), e.g. a height field the geometry rides.
+- Shared code: `#extension GL_GOOGLE_include_directive : require`, `#include "common.glsl"` beside the shader. `examples/koi/` uses all of it.
 - Clip space is WebGL's: `y = 1` is the top of the picture, in a `.bottom_up` canvas too, so ported vertex shaders
   work unchanged. `examples/draw/` shows a strip and instanced dots.
 

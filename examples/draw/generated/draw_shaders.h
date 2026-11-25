@@ -40,7 +40,7 @@ static const unsigned char ribbon_vert1_dxbc[944] = {
 static const BareShaderCode ribbon_shader = {
     ribbon_spirv, ribbon_dxil, ribbon_msl, 312, 2820, 298, 0, 0, 0, ribbon_dxbc, 488,
     { ribbon_vert0_spirv, ribbon_vert1_spirv }, { ribbon_vert0_dxil, ribbon_vert1_dxil }, { ribbon_vert0_msl, ribbon_vert1_msl }, { ribbon_vert0_dxbc, ribbon_vert1_dxbc },
-    { 1136, 1220 }, { 3704, 3720 }, { 555, 601 }, { 920, 944 }, 2, 1
+    { 1136, 1220 }, { 3704, 3720 }, { 555, 601 }, { 920, 944 }, 2, 1, 0
 };
 
 static const unsigned char dots_spirv[676] = {
@@ -82,6 +82,6 @@ static const unsigned char dots_vert1_dxbc[1220] = {
 static const BareShaderCode dots_shader = {
     dots_spirv, dots_dxil, dots_msl, 676, 3140, 418, 0, 0, 0, dots_dxbc, 756,
     { dots_vert0_spirv, dots_vert1_spirv }, { dots_vert0_dxil, dots_vert1_dxil }, { dots_vert0_msl, dots_vert1_msl }, { dots_vert0_dxbc, dots_vert1_dxbc },
-    { 1632, 1716 }, { 4380, 4400 }, { 1834, 1881 }, { 1196, 1220 }, 2, 1
+    { 1632, 1716 }, { 4380, 4400 }, { 1834, 1881 }, { 1196, 1220 }, 2, 1, 0
 };
 

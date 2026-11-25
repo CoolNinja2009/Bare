@@ -44,6 +44,14 @@ bare_add_shaders(singularity OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/singularity/gene
     singularity/shaders/scene.glsl singularity/shaders/down.glsl singularity/shaders/up.glsl
     singularity/shaders/comp.glsl singularity/shaders/probe.glsl)
 
+# Koi Pond: a garden pond seen from above (Screen+'s sample): passes and bare_draw.
+add_executable(koi koi/koi.c)
+target_link_libraries(koi PRIVATE bare)
+target_compile_options(koi PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(koi OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/koi/generated/koi_shaders.h SOURCES
+    koi/shaders/sim.glsl koi/shaders/base.glsl koi/shaders/floor.glsl koi/shaders/water.glsl
+    koi/shaders/koi.glsl koi/shaders/float.glsl)
+
 # Aurora: Screen+'s "Aurora" wallpaper as a program (soft light, stars, the
 # cursor gathers the light); a Screen+ app wallpaper with a Customise panel.
 add_executable(aurora aurora/aurora.c)

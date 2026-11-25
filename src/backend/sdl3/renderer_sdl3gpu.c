@@ -60,6 +60,7 @@ typedef struct PassPipeline {
 typedef struct UserShader {
     SDL_GPUShader *fs;
     SDL_GPUShader *vs[2];     /* a program's vertex half: as written, with y flipped (bottom_up targets) */
+    int            vert_samplers;
     bool           no_uv;     /* drawn with the pass vertex shader without v_uv */
     bool           dxbc;      /* made from DXBC: its vertex half must be DXBC too */
     PassPipeline   pipes[MAX_PASS_PIPELINES];
@@ -801,9 +802,11 @@ static void create_shader(const BareGpuShader *sh) {
                         dxbc ? c->dxbc_size : 0 };
     u->fs = make_shader_ex(SDL_GPU_SHADERSTAGE_FRAGMENT, code, &u->dxbc);
     u->no_uv = c->no_uv != 0;
+    u->vert_samplers = program ? c->vert_samplers : 0;
     for (int k = 0; program && u->fs && k < 2; k++) {
         ShaderCode v = { c->vert_spirv[k], c->vert_dxil[k], c->vert_msl[k], c->vert_spirv_size[k],
-                         c->vert_dxil_size[k], c->vert_msl_size[k], (Uint32)c->vert_uniform_buffers, 0,
+                         c->vert_dxil_size[k], c->vert_msl_size[k], (Uint32)c->vert_uniform_buffers,
+                         (Uint32)c->vert_samplers,
                          u->dxbc ? c->vert_dxbc[k] : NULL, u->dxbc ? c->vert_dxbc_size[k] : 0 };
         u->vs[k] = make_shader(SDL_GPU_SHADERSTAGE_VERTEX, v);
         if (!u->vs[k]) {   /* a program without its vertex half can't draw */
@@ -841,7 +844,8 @@ static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextur
         target.blend_state.src_color_blendfactor = src;
         target.blend_state.dst_color_blendfactor = dst;
         target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-        target.blend_state.src_alpha_blendfactor = src;
+        /* ALPHA: the alpha channel adds coverage (ONE, 1 - a), so an opaque target stays opaque */
+        target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         target.blend_state.dst_alpha_blendfactor = dst;
         target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
     }
@@ -970,7 +974,8 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) 
 
     SDL_GPUTextureSamplerBinding inputs[BARE_MAX_INPUTS];
     int n = SDL_min(p->input_count, BARE_MAX_INPUTS);
-    for (int i = 0; i < n; i++) {
+    int nv = draw >= 0 ? SDL_min(gpu.shaders[p->shader].vert_samplers, BARE_MAX_INPUTS) : 0;
+    for (int i = 0; i < SDL_max(n, nv); i++) {
         Uint32 id = p->inputs[i];
         bool ok = id && id < gpu.texture_cap && gpu.textures[id].tex;
         inputs[i].texture = ok ? gpu.textures[id].tex : gpu.white;
@@ -997,6 +1002,7 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) 
     if (!pass) return;
     SDL_BindGPUGraphicsPipeline(pass, pipeline);
     if (n) SDL_BindGPUFragmentSamplers(pass, 0, inputs, (Uint32)n);
+    if (nv) SDL_BindGPUVertexSamplers(pass, 0, inputs, (Uint32)nv);
     if (p->params_size > 0) SDL_PushGPUFragmentUniformData(cmd, 0, p->params, (Uint32)p->params_size);
     if (draw < 0) {
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);

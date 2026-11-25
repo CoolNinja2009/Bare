@@ -235,7 +235,7 @@ BareShader bare_shader(const BareShaderCode *code) {
     if (!code || !(code->spirv || code->dxil || code->msl) || code->samplers < 0 ||
         code->samplers > BARE_MAX_INPUTS || code->uniform_buffers < 0 || code->uniform_buffers > 1 ||
         code->vert_uniform_buffers < 0 || code->vert_uniform_buffers > 1 || code->vert_inputs < 0 ||
-        code->vert_inputs > 16) {
+        code->vert_inputs > 16 || code->vert_samplers < 0 || code->vert_samplers > BARE_MAX_INPUTS) {
         bare__log(ctx, "bare_shader: not valid shader code (use the header bare_add_shaders generates)");
         return 0;
     }
@@ -329,9 +329,9 @@ static const BareShaderRec *check_common(BareContext *ctx, const char *what, con
         }
         count = i + 1;
     }
-    if (count > sh->code->samplers) {
-        bare__log(ctx, "%s at %s:%d: %d inputs given, the shader reads %d", what, file, line, count,
-                  sh->code->samplers);
+    int reads = sh->code->samplers > sh->code->vert_samplers ? sh->code->samplers : sh->code->vert_samplers;
+    if (count > reads) {
+        bare__log(ctx, "%s at %s:%d: %d inputs given, the shader reads %d", what, file, line, count, reads);
         return NULL;
     }
     if (params_size < 0 || params_size > MAX_PARAMS || (params_size > 0 && !params)) {

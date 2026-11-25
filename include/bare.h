@@ -395,6 +395,7 @@ typedef struct BareShaderCode {
     unsigned vert_spirv_size[2], vert_dxil_size[2], vert_msl_size[2], vert_dxbc_size[2];
     int vert_inputs;            /* vertex attributes it reads (each one vec4 slot) */
     int vert_uniform_buffers;   /* 0 or 1: whether its vertex half reads the params */
+    int vert_samplers;          /* inputs its vertex half reads (set 0, binding = the input's index) */
 } BareShaderCode;
 
 typedef uint32_t BareShader;   /* 0 = none */
@@ -406,7 +407,8 @@ typedef enum BareBlend {
     BARE_BLEND_NONE = 0,  /* default: the shader's output replaces the target's pixels */
     BARE_BLEND_ADD,       /* added to them */
     BARE_BLEND_OVER,      /* premultiplied alpha over them */
-    BARE_BLEND_ALPHA      /* straight alpha over them: WebGL's blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA) */
+    BARE_BLEND_ALPHA      /* straight alpha over them: colour as WebGL's blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA),
+                             alpha as a + a_dst (1 - a), so an opaque canvas stays opaque */
 } BareBlend;
 
 #define BARE_MAX_INPUTS 8
@@ -445,7 +447,7 @@ typedef struct BarePass {
 typedef struct BareDraw {
     BareImage target;                   /* a canvas; not one of the inputs */
     BareShader shader;                  /* a program: its .glsl has a BARE_VERTEX half */
-    BareImage inputs[BARE_MAX_INPUTS];  /* the fragment half's samplers 0, 1, ... */
+    BareImage inputs[BARE_MAX_INPUTS];  /* samplers 0, 1, ... of either half (vertex: set 0, fragment: set 2) */
     const void *params;                 /* the uniform block both halves may read (std140), copied */
     int params_size;
     BareBlend blend;
