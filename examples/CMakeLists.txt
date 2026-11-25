@@ -28,6 +28,13 @@ bare_add_shaders(glass_motion OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/glass_motion/ge
     glass_motion/shaders/dunes.glsl glass_motion/shaders/petals.glsl glass_motion/shaders/wheel.glsl
     glass_motion/shaders/icons.glsl)
 
+# Draw: your own triangles (bare_draw): a strip and instanced dots.
+add_executable(draw draw/draw.c)
+target_link_libraries(draw PRIVATE bare)
+target_compile_options(draw PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(draw OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/draw/generated/draw_shaders.h SOURCES
+    draw/shaders/ribbon.glsl draw/shaders/dots.glsl)
+
 # Singularity: a black hole ray traced in real time; a pixel-exact port of a
 # Screen+ web wallpaper (two render targets, a 32-bit float buffer, bloom).
 add_executable(singularity singularity/singularity.c)

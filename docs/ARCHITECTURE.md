@@ -461,7 +461,7 @@ typedef struct BareTextureUpload {
 } BareTextureUpload;
 
 typedef struct BareDrawList {
-    const BareGpuOp         *ops;     int op_count;       /* images, shaders, canvas passes: run first, in order */
+    const BareGpuOp         *ops;     int op_count;       /* images, shaders, canvas passes and draws: run first, in order */
     const BareTextureUpload *uploads; int upload_count;   /* then these (glyph atlas) */
     const BareDrawCmd       *cmds;    int cmd_count;
     int        width, height;          /* framebuffer, physical pixels */

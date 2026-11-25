@@ -355,7 +355,11 @@ bool      bare_picture_failed(const char *path, BarePictureOptions options);
  * on the GPU in the order they're called, before the frame they're called in is
  * drawn (or the next one, when called between frames). Shaders are GLSL 450,
  * compiled at build time by the bare_add_shaders() CMake function, which also
- * documents the conventions they follow. */
+ * documents the conventions they follow.
+ *
+ * A draw (bare_draw) is WebGL's drawArrays / drawArraysInstanced: triangles
+ * from your own vertex data, run through a program (a .glsl file with a
+ * vertex half too), into a canvas. */
 
 typedef enum BareFormat {
     BARE_RGBA8 = 0,       /* default: 8-bit colour */
@@ -385,6 +389,12 @@ typedef struct BareShaderCode {
     int no_uv;            /* 1: never reads v_uv (only gl_FragCoord) */
     const unsigned char *dxbc;  /* optional, preferred on D3D12: FXC's code, as browsers make for WebGL */
     unsigned dxbc_size;
+    /* A program for bare_draw: the vertex half, as written ([0]) and with
+     * gl_Position.y negated ([1], for bottom_up canvases). NULL for a pass shader. */
+    const unsigned char *vert_spirv[2], *vert_dxil[2], *vert_msl[2], *vert_dxbc[2];
+    unsigned vert_spirv_size[2], vert_dxil_size[2], vert_msl_size[2], vert_dxbc_size[2];
+    int vert_inputs;            /* vertex attributes it reads (each one vec4 slot) */
+    int vert_uniform_buffers;   /* 0 or 1: whether its vertex half reads the params */
 } BareShaderCode;
 
 typedef uint32_t BareShader;   /* 0 = none */
@@ -395,7 +405,8 @@ void       bare_shader_free(BareShader shader);
 typedef enum BareBlend {
     BARE_BLEND_NONE = 0,  /* default: the shader's output replaces the target's pixels */
     BARE_BLEND_ADD,       /* added to them */
-    BARE_BLEND_OVER       /* premultiplied alpha over them */
+    BARE_BLEND_OVER,      /* premultiplied alpha over them */
+    BARE_BLEND_ALPHA      /* straight alpha over them: WebGL's blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA) */
 } BareBlend;
 
 #define BARE_MAX_INPUTS 8
@@ -416,6 +427,41 @@ typedef struct BarePass {
 
 #define bare_pass(...)    bare_pass_(&(BarePass){ __VA_ARGS__ }, __FILE__, __LINE__)
 #define BARE_PARAMS(var)  .params = &(var), .params_size = (int)sizeof(var)
+
+/* A draw: triangles from your vertex data into a canvas, as WebGL's
+ * drawArrays(TRIANGLES or TRIANGLE_STRIP) and drawArraysInstanced.
+ *
+ *   typedef struct { float pos[4], color[4]; } Vert;       // each attribute a vec4 slot
+ *   Vert tri[3] = { ... };
+ *   bare_draw(.target = sky, .shader = shapes, .clear = true,
+ *             BARE_VERTICES(tri, 3), BARE_PARAMS(p));
+ *
+ * Attributes are 16 bytes each (4 floats; declare them float, vec2, vec3 or
+ * vec4): a vertex's at locations 0, 1, ..., then an instance's after them.
+ * With no .vertices the program builds its vertices from gl_VertexIndex
+ * (and gl_InstanceIndex). Clip space is WebGL's: in a bottom_up canvas, y = 1
+ * is the top of the picture, as in a WebGL framebuffer. Vertex and instance
+ * data are copied, up to 64 MB a draw. */
+typedef struct BareDraw {
+    BareImage target;                   /* a canvas; not one of the inputs */
+    BareShader shader;                  /* a program: its .glsl has a BARE_VERTEX half */
+    BareImage inputs[BARE_MAX_INPUTS];  /* the fragment half's samplers 0, 1, ... */
+    const void *params;                 /* the uniform block both halves may read (std140), copied */
+    int params_size;
+    BareBlend blend;
+    BareImage extra_targets[BARE_MAX_TARGETS - 1];
+    const void *vertices;               /* vertex_count * vertex_size bytes, or NULL */
+    int vertex_size, vertex_count;      /* bytes a vertex (a multiple of 16), vertices to draw */
+    const void *instances;              /* instance_count * instance_size bytes, or NULL */
+    int instance_size, instance_count;  /* 0 instances: drawn once */
+    bool strip;                         /* a triangle strip (default: a list, three vertices a triangle) */
+    bool clear;                         /* clear the targets to .clear_color first */
+    float clear_color[4];               /* straight RGBA, 0..1 (HDR canvases: any value) */
+} BareDraw;
+
+#define bare_draw(...)    bare_draw_(&(BareDraw){ __VA_ARGS__ }, __FILE__, __LINE__)
+#define BARE_VERTICES(array, count)  .vertices = (array), .vertex_size = (int)sizeof((array)[0]), .vertex_count = (count)
+#define BARE_INSTANCES(array, count) .instances = (array), .instance_size = (int)sizeof((array)[0]), .instance_count = (count)
 
 /* ------------------------------------------------------------------------ */
 /* Elements                                                                 */
@@ -1021,6 +1067,7 @@ void      bare_sound_free(BareSound sound);
 BareState bare_box_(const BareBox *box, const char *file, int line);
 BareImage bare_canvas_(const BareCanvas *canvas);
 void      bare_pass_(const BarePass *pass, const char *file, int line);
+void      bare_draw_(const BareDraw *draw, const char *file, int line);
 int       bare_open_(const BareBox *box, const char *file, int line);   /* returns 1 */
 int       bare_close_(void);                                            /* returns 0 */
 BareState bare_text_(const char *text, const BareTextStyle *style, const char *file, int line);

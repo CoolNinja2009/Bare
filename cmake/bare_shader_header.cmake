@@ -1,5 +1,5 @@
-# Script behind bare_add_shaders(): GLSL fragment shaders -> one C header of
-# BareShaderCode values. Inputs: GLSLC, SHADERCROSS, SOURCES (|-separated),
+# Script behind bare_add_shaders(): GLSL fragment shaders (and programs, whose
+# file also has a BARE_VERTEX half) -> one C header of BareShaderCode values. Inputs: GLSLC, SHADERCROSS, SOURCES (|-separated),
 # OUT (header), WORK (scratch directory).
 
 string(REPLACE "|" ";" SOURCES "${SOURCES}")
@@ -30,7 +30,8 @@ foreach(src ${SOURCES})
     get_filename_component(stem ${src} NAME_WE)
     string(MAKE_C_IDENTIFIER ${stem} name)
     set(base ${WORK}/${name})
-    run(${GLSLC} -fshader-stage=frag -O ${src} -o ${base}.spv)
+    set(frag_defs -DBARE_FRAGMENT -DBARE_PARAMS_SET=3)
+    run(${GLSLC} -fshader-stage=frag ${frag_defs} -O ${src} -o ${base}.spv)
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d DXIL -t fragment -o ${base}.dxil)
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d MSL -t fragment -o ${base}.msl)
     run(${SHADERCROSS} ${base}.spv -s SPIRV -d JSON -t fragment -o ${base}.json)
@@ -40,7 +41,7 @@ foreach(src ${SOURCES})
     # (a * 0.6 + b * 0.6 -> 0.6 * (a + b)), which no browser does; FXC does the
     # optimizing, as for WebGL. A shader FXC can't take ships without DXBC.
     file(REMOVE ${base}.dxbc)
-    run(${GLSLC} -fshader-stage=frag -O0 ${src} -o ${base}_o0.spv)
+    run(${GLSLC} -fshader-stage=frag ${frag_defs} -O0 ${src} -o ${base}_o0.spv)
     execute_process(COMMAND ${SHADERCROSS} ${base}_o0.spv -s SPIRV -d DXBC -t fragment -o ${base}.dxbc
                     RESULT_VARIABLE dxbc_rc OUTPUT_QUIET ERROR_QUIET)
     file(READ ${base}.json json)
@@ -71,9 +72,78 @@ foreach(src ${SOURCES})
         string(APPEND text "static const unsigned char ${name}_dxbc[${size}] = {\n    ${b}\n};\n")
         set(dxbc_ref "${name}_dxbc, ${size}")
     endif()
+    # A program (bare_draw): the file has a vertex half too. It's compiled as
+    # written and again with gl_Position.y negated, for bottom_up canvases
+    # (WebGL's clip space there): the source's main() renamed and wrapped.
+    file(READ ${src} source)
+    string(FIND "${source}" "BARE_VERTEX" is_program)
+    set(vert_ref ", { 0 }, { 0 }, { 0 }, { 0 }, { 0 }, { 0 }, { 0 }, { 0 }, 0, 0")   # a pass shader: no vertex half
+    if(NOT is_program EQUAL -1)
+        string(REGEX MATCH "^[^\n]*#version[^\n]*\n" version_line "${source}")
+        if(NOT version_line)
+            message(FATAL_ERROR "${src}: a program must start with #version 450")
+        endif()
+        string(LENGTH "${version_line}" vlen)
+        string(SUBSTRING "${source}" ${vlen} -1 body)
+        file(WRITE ${base}_flip.glsl "${version_line}#define main bare_user_main\n#line 2\n${body}\n"
+             "#undef main\nvoid main() { bare_user_main(); gl_Position.y = -gl_Position.y; }\n")
+        set(vdefs -DBARE_VERTEX -DBARE_PARAMS_SET=1)
+        set(lists spirv dxil msl dxbc)
+        foreach(k 0 1)
+            if(k EQUAL 0)
+                set(vsrc ${src})
+            else()
+                set(vsrc ${base}_flip.glsl)
+            endif()
+            set(vb ${base}_vert${k})
+            run(${GLSLC} -fshader-stage=vert ${vdefs} -O ${vsrc} -o ${vb}.spv)
+            run(${SHADERCROSS} ${vb}.spv -s SPIRV -d DXIL -t vertex -o ${vb}.dxil)
+            run(${SHADERCROSS} ${vb}.spv -s SPIRV -d MSL -t vertex -o ${vb}.msl)
+            file(REMOVE ${vb}.dxbc)
+            run(${GLSLC} -fshader-stage=vert ${vdefs} -O0 ${vsrc} -o ${vb}_o0.spv)
+            execute_process(COMMAND ${SHADERCROSS} ${vb}_o0.spv -s SPIRV -d DXBC -t vertex -o ${vb}.dxbc
+                            RESULT_VARIABLE vdxbc_rc OUTPUT_QUIET ERROR_QUIET)
+            if(k EQUAL 0)
+                run(${SHADERCROSS} ${vb}.spv -s SPIRV -d JSON -t vertex -o ${vb}.json)
+                file(READ ${vb}.json vjson)
+                string(JSON vsamplers GET "${vjson}" samplers)
+                string(JSON vuniforms GET "${vjson}" uniform_buffers)
+                string(JSON vinputs LENGTH "${vjson}" inputs)
+                if(NOT vsamplers EQUAL 0)
+                    message(FATAL_ERROR "${src}: the vertex half can't read images")
+                endif()
+                if(vuniforms GREATER 1)
+                    message(FATAL_ERROR "${src}: at most one uniform block (set = BARE_PARAMS_SET, binding = 0)")
+                endif()
+            endif()
+            foreach(fmt spirv dxil msl)
+                if(fmt STREQUAL "spirv")
+                    set(ext spv)
+                else()
+                    set(ext ${fmt})
+                endif()
+                bytes(${vb}.${ext} b size)
+                string(APPEND text "static const unsigned char ${name}_vert${k}_${fmt}[${size}] = {\n    ${b}\n};\n")
+                set(${fmt}_ref${k} "${name}_vert${k}_${fmt}")
+                set(${fmt}_size${k} ${size})
+            endforeach()
+            if(vdxbc_rc EQUAL 0 AND EXISTS ${vb}.dxbc)
+                bytes(${vb}.dxbc b size)
+                string(APPEND text "static const unsigned char ${name}_vert${k}_dxbc[${size}] = {\n    ${b}\n};\n")
+                set(dxbc_ref${k} "${name}_vert${k}_dxbc")
+                set(dxbc_size${k} ${size})
+            else()
+                set(dxbc_ref${k} "NULL")
+                set(dxbc_size${k} 0)
+            endif()
+        endforeach()
+        string(CONCAT vert_ref ",\n    { ${spirv_ref0}, ${spirv_ref1} }, { ${dxil_ref0}, ${dxil_ref1} }, { ${msl_ref0}, ${msl_ref1} }, "
+            "{ ${dxbc_ref0}, ${dxbc_ref1} },\n    { ${spirv_size0}, ${spirv_size1} }, { ${dxil_size0}, ${dxil_size1} }, "
+            "{ ${msl_size0}, ${msl_size1} }, { ${dxbc_size0}, ${dxbc_size1} }, ${vinputs}, ${vuniforms}")
+    endif()
     string(APPEND text "static const BareShaderCode ${name}_shader = {\n"
         "    ${name}_spirv, ${name}_dxil, ${name}_msl, ${spirv_size}, ${dxil_size}, ${msl_size}, "
-        "${samplers}, ${uniforms}, ${no_uv}, ${dxbc_ref}\n};\n\n")
+        "${samplers}, ${uniforms}, ${no_uv}, ${dxbc_ref}${vert_ref}\n};\n\n")
 endforeach()
 
 # Only touch the header when it changed, so unchanged shaders don't rebuild the app.

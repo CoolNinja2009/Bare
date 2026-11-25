@@ -121,7 +121,8 @@ typedef enum BareGpuOpKind {
     BARE_GPU_IMAGE_DESTROY,
     BARE_GPU_SHADER_CREATE,
     BARE_GPU_SHADER_DESTROY,
-    BARE_GPU_PASS
+    BARE_GPU_PASS,
+    BARE_GPU_DRAW              /* pass, with the draw fields */
 } BareGpuOpKind;
 
 typedef struct BareGpuImage {
@@ -146,6 +147,11 @@ typedef struct BareGpuPass {
     const void *params;
     int         params_size;
     BareBlend   blend;
+    /* BARE_GPU_DRAW only */
+    const void *vertices, *instances;            /* NULL: none */
+    int         vertex_size, vertex_count, instance_size, instance_count;
+    bool        strip, clear, flip;              /* flip: the target is bottom_up (gl_Position.y negated) */
+    float       clear_color[4];
 } BareGpuPass;
 
 typedef struct BareGpuOp {

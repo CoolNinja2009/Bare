@@ -44,11 +44,14 @@ typedef struct Texture {
     SDL_GPUSampler      *sampler;       /* NULL = the default (bilinear, clamped) */
 } Texture;
 
-/* An app shader for canvas passes, with a pipeline per (target formats, blend). */
+/* An app shader for canvas passes and draws, with a pipeline per (target
+ * formats, blend, and for draws the vertex layout, strip and flip). */
 typedef struct PassPipeline {
     SDL_GPUTextureFormat     formats[BARE_MAX_TARGETS];
     int                      targets;
     BareBlend                blend;
+    int                      vertex_size, instance_size;
+    bool                     strip, flip;
     SDL_GPUGraphicsPipeline *pipeline;
 } PassPipeline;
 
@@ -56,6 +59,7 @@ typedef struct PassPipeline {
 
 typedef struct UserShader {
     SDL_GPUShader *fs;
+    SDL_GPUShader *vs[2];     /* a program's vertex half: as written, with y flipped (bottom_up targets) */
     bool           no_uv;     /* drawn with the pass vertex shader without v_uv */
     bool           dxbc;      /* made from DXBC: its vertex half must be DXBC too */
     PassPipeline   pipes[MAX_PASS_PIPELINES];
@@ -84,6 +88,11 @@ typedef struct GpuRenderer {
     Uint32                   upload_cap;         /* bytes */
     SDL_GPUTransferBuffer   *image_xfer;         /* the frame's image uploads */
     Uint32                   image_cap;          /* bytes */
+    SDL_GPUBuffer           *draw_buf;           /* the frame's vertex and instance data (bare_draw) */
+    SDL_GPUTransferBuffer   *draw_xfer;
+    Uint32                   draw_cap;           /* bytes */
+    Uint32                  *draw_offsets;       /* per draw: its vertices' and instances' offsets */
+    Uint32                   draw_offset_cap;
 
     Instance  *instances; Uint32 instance_count, instances_alloc;
     Batch     *batches;   Uint32 batch_count, batches_alloc;
@@ -315,6 +324,8 @@ static bool init(void *self, const BarePlatform *platform) {
     return true;
 }
 
+static void destroy_shader(Uint32 id);
+
 static void shutdown_renderer(void *self) {
     (void)self;
     if (!gpu.device) return;
@@ -323,11 +334,7 @@ static void shutdown_renderer(void *self) {
         if (gpu.textures[i].tex) SDL_ReleaseGPUTexture(gpu.device, gpu.textures[i].tex);
     }
     SDL_free(gpu.textures);
-    for (Uint32 i = 0; i < gpu.shader_cap; i++) {
-        UserShader *u = &gpu.shaders[i];
-        for (int k = 0; k < u->pipe_count; k++) SDL_ReleaseGPUGraphicsPipeline(gpu.device, u->pipes[k].pipeline);
-        if (u->fs) SDL_ReleaseGPUShader(gpu.device, u->fs);
-    }
+    for (Uint32 i = 0; i < gpu.shader_cap; i++) destroy_shader(i);
     SDL_free(gpu.shaders);
     for (int k = 1; k < 4; k++) SDL_ReleaseGPUSampler(gpu.device, gpu.samplers[k]);
     for (int k = 0; k < 4; k++)
@@ -342,6 +349,9 @@ static void shutdown_renderer(void *self) {
     if (gpu.instance_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.instance_xfer);
     if (gpu.upload_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.upload_xfer);
     if (gpu.image_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.image_xfer);
+    if (gpu.draw_buf) SDL_ReleaseGPUBuffer(gpu.device, gpu.draw_buf);
+    if (gpu.draw_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.draw_xfer);
+    SDL_free(gpu.draw_offsets);
     SDL_ReleaseGPUTexture(gpu.device, gpu.white);
     SDL_ReleaseGPUSampler(gpu.device, gpu.sampler);
     SDL_ReleaseGPUSampler(gpu.device, gpu.mip_sampler);
@@ -773,6 +783,8 @@ static void destroy_shader(Uint32 id) {
     UserShader *u = &gpu.shaders[id];
     for (int k = 0; k < u->pipe_count; k++) SDL_ReleaseGPUGraphicsPipeline(gpu.device, u->pipes[k].pipeline);
     if (u->fs) SDL_ReleaseGPUShader(gpu.device, u->fs);
+    for (int k = 0; k < 2; k++)
+        if (u->vs[k]) SDL_ReleaseGPUShader(gpu.device, u->vs[k]);
     memset(u, 0, sizeof *u);
 }
 
@@ -780,17 +792,36 @@ static void create_shader(const BareGpuShader *sh) {
     if (!shader_slot(sh->id)) return;
     destroy_shader(sh->id);
     const BareShaderCode *c = sh->code;
+    UserShader *u = &gpu.shaders[sh->id];
+    bool program = c->vert_spirv[0] || c->vert_dxil[0] || c->vert_msl[0];
+    /* Both halves from DXBC or neither: D3D12 can't link one with the other. */
+    bool dxbc = c->dxbc && (!program || (c->vert_dxbc[0] && c->vert_dxbc[1]));
     ShaderCode code = { c->spirv, c->dxil, c->msl, c->spirv_size, c->dxil_size, c->msl_size,
-                        (Uint32)c->uniform_buffers, (Uint32)c->samplers, c->dxbc, c->dxbc_size };
-    gpu.shaders[sh->id].fs = make_shader_ex(SDL_GPU_SHADERSTAGE_FRAGMENT, code, &gpu.shaders[sh->id].dxbc);
-    gpu.shaders[sh->id].no_uv = c->no_uv != 0;
+                        (Uint32)c->uniform_buffers, (Uint32)c->samplers, dxbc ? c->dxbc : NULL,
+                        dxbc ? c->dxbc_size : 0 };
+    u->fs = make_shader_ex(SDL_GPU_SHADERSTAGE_FRAGMENT, code, &u->dxbc);
+    u->no_uv = c->no_uv != 0;
+    for (int k = 0; program && u->fs && k < 2; k++) {
+        ShaderCode v = { c->vert_spirv[k], c->vert_dxil[k], c->vert_msl[k], c->vert_spirv_size[k],
+                         c->vert_dxil_size[k], c->vert_msl_size[k], (Uint32)c->vert_uniform_buffers, 0,
+                         u->dxbc ? c->vert_dxbc[k] : NULL, u->dxbc ? c->vert_dxbc_size[k] : 0 };
+        u->vs[k] = make_shader(SDL_GPU_SHADERSTAGE_VERTEX, v);
+        if (!u->vs[k]) {   /* a program without its vertex half can't draw */
+            SDL_ReleaseGPUShader(gpu.device, u->fs);
+            u->fs = NULL;
+        }
+    }
 }
 
 static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextureFormat *formats, int n,
-                                              BareBlend blend) {
+                                              const BareGpuPass *op, bool draw) {
+    BareBlend blend = op->blend;
+    int vsize = draw ? op->vertex_size : 0, isize = draw ? op->instance_size : 0;
+    bool strip = draw && op->strip, flip = draw && op->flip;
     for (int k = 0; k < u->pipe_count; k++) {
         const PassPipeline *pp = &u->pipes[k];
-        if (pp->targets == n && pp->blend == blend && !memcmp(pp->formats, formats, (size_t)n * sizeof *formats))
+        if (pp->targets == n && pp->blend == blend && pp->vertex_size == vsize && pp->instance_size == isize &&
+            pp->strip == strip && pp->flip == flip && !memcmp(pp->formats, formats, (size_t)n * sizeof *formats))
             return pp->pipeline;
     }
     if (u->pipe_count == MAX_PASS_PIPELINES) {
@@ -805,19 +836,41 @@ static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextur
     if (blend != BARE_BLEND_NONE) {
         SDL_GPUBlendFactor dst = blend == BARE_BLEND_ADD ? SDL_GPU_BLENDFACTOR_ONE
                                                          : SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        SDL_GPUBlendFactor src = blend == BARE_BLEND_ALPHA ? SDL_GPU_BLENDFACTOR_SRC_ALPHA : SDL_GPU_BLENDFACTOR_ONE;
         target.blend_state.enable_blend = true;
-        target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        target.blend_state.src_color_blendfactor = src;
         target.blend_state.dst_color_blendfactor = dst;
         target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-        target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        target.blend_state.src_alpha_blendfactor = src;
         target.blend_state.dst_alpha_blendfactor = dst;
         target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
     }
     SDL_GPUGraphicsPipelineCreateInfo info;
     SDL_zero(info);
-    info.vertex_shader = gpu.pass_vs[u->no_uv][u->dxbc];
+    info.vertex_shader = draw ? u->vs[flip] : gpu.pass_vs[u->no_uv][u->dxbc];
     info.fragment_shader = u->fs;
-    info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    info.primitive_type = strip ? SDL_GPU_PRIMITIVETYPE_TRIANGLESTRIP : SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    /* A draw's attributes: vec4 slots, the vertex's (buffer 0) then the instance's (the next buffer). */
+    SDL_GPUVertexBufferDescription bufs[2];
+    SDL_GPUVertexAttribute attrs[32];
+    Uint32 nb = 0, na = 0;
+    SDL_zero(bufs);
+    SDL_zero(attrs);
+    for (int k = 0; k < 2; k++) {
+        int size = k == 0 ? vsize : isize;
+        if (size <= 0) continue;
+        bufs[nb] = (SDL_GPUVertexBufferDescription){
+            .slot = nb, .pitch = (Uint32)size,
+            .input_rate = k == 0 ? SDL_GPU_VERTEXINPUTRATE_VERTEX : SDL_GPU_VERTEXINPUTRATE_INSTANCE };
+        for (int a = 0; a < size / 16 && na < 32; a++, na++)
+            attrs[na] = (SDL_GPUVertexAttribute){ .location = na, .buffer_slot = nb,
+                                                  .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = (Uint32)a * 16 };
+        nb++;
+    }
+    info.vertex_input_state.vertex_buffer_descriptions = bufs;
+    info.vertex_input_state.num_vertex_buffers = nb;
+    info.vertex_input_state.vertex_attributes = attrs;
+    info.vertex_input_state.num_vertex_attributes = na;
     info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
     info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
     for (int i = 0; i < n; i++) {
@@ -836,12 +889,71 @@ static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextur
     memcpy(pp->formats, formats, (size_t)n * sizeof *formats);
     pp->targets = n;
     pp->blend = blend;
+    pp->vertex_size = vsize, pp->instance_size = isize;
+    pp->strip = strip, pp->flip = flip;
     pp->pipeline = p;
     return p;
 }
 
-static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p) {
+/* A draw's vertex and instance data: every draw of the frame in one buffer,
+ * copied over once before the first pass. Offsets go in draw order. */
+static Uint32 draw_bytes(const BareGpuPass *p, int which) {
+    Uint32 n = which == 0 ? (p->vertices ? (Uint32)p->vertex_size * (Uint32)p->vertex_count : 0)
+                          : (p->instances ? (Uint32)p->instance_size * (Uint32)p->instance_count : 0);
+    return (n + 15) & ~15u;
+}
+
+static bool stage_draws(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
+    Uint32 total = 0, draws = 0;
+    for (int i = 0; i < list->op_count; i++) {
+        if (list->ops[i].kind != BARE_GPU_DRAW) continue;
+        total += draw_bytes(&list->ops[i].as.pass, 0) + draw_bytes(&list->ops[i].as.pass, 1);
+        draws++;
+    }
+    if (!total) return true;
+    if (!grow((void **)&gpu.draw_offsets, &gpu.draw_offset_cap, draws * 2, sizeof *gpu.draw_offsets)) return false;
+    if (total > gpu.draw_cap) {
+        Uint32 cap = gpu.draw_cap ? gpu.draw_cap : 64 * 1024;
+        while (cap < total) cap *= 2;
+        if (gpu.draw_buf) SDL_ReleaseGPUBuffer(gpu.device, gpu.draw_buf);
+        if (gpu.draw_xfer) SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.draw_xfer);
+        SDL_GPUBufferCreateInfo bi = { .usage = SDL_GPU_BUFFERUSAGE_VERTEX, .size = cap };
+        SDL_GPUTransferBufferCreateInfo ti = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = cap };
+        gpu.draw_buf = SDL_CreateGPUBuffer(gpu.device, &bi);
+        gpu.draw_xfer = SDL_CreateGPUTransferBuffer(gpu.device, &ti);
+        gpu.draw_cap = gpu.draw_buf && gpu.draw_xfer ? cap : 0;
+        if (!gpu.draw_cap) return false;
+    }
+    Uint8 *dst = SDL_MapGPUTransferBuffer(gpu.device, gpu.draw_xfer, true);
+    if (!dst) return false;
+    Uint32 at = 0, d = 0;
+    for (int i = 0; i < list->op_count; i++) {
+        const BareGpuPass *p = &list->ops[i].as.pass;
+        if (list->ops[i].kind != BARE_GPU_DRAW) continue;
+        for (int k = 0; k < 2; k++) {
+            const void *src = k == 0 ? p->vertices : p->instances;
+            Uint32 n = draw_bytes(p, k);
+            gpu.draw_offsets[d * 2 + (Uint32)k] = at;
+            if (src && n) memcpy(dst + at, src, k == 0 ? (size_t)p->vertex_size * (size_t)p->vertex_count
+                                                       : (size_t)p->instance_size * (size_t)p->instance_count);
+            at += n;
+        }
+        d++;
+    }
+    SDL_UnmapGPUTransferBuffer(gpu.device, gpu.draw_xfer);
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation src = { .transfer_buffer = gpu.draw_xfer, .offset = 0 };
+    SDL_GPUBufferRegion region = { .buffer = gpu.draw_buf, .offset = 0, .size = total };
+    SDL_UploadToGPUBuffer(copy, &src, &region, true);
+    SDL_EndGPUCopyPass(copy);
+    return true;
+}
+
+/* A pass (one triangle over the target) or a draw (`draw` >= 0: the frame's
+ * draw number, for its data's place in draw_buf). */
+static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) {
     if (p->shader >= gpu.shader_cap || !gpu.shaders[p->shader].fs) return;
+    if (draw >= 0 && !gpu.shaders[p->shader].vs[0]) return;
     /* The target, then the extra targets in order (the core checked them). */
     Texture *t[BARE_MAX_TARGETS];
     SDL_GPUTextureFormat formats[BARE_MAX_TARGETS];
@@ -853,7 +965,7 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p) {
         t[nt] = &gpu.textures[id];
         formats[nt++] = gpu.textures[id].gpu_format;
     }
-    SDL_GPUGraphicsPipeline *pipeline = pass_pipeline(&gpu.shaders[p->shader], formats, nt, p->blend);
+    SDL_GPUGraphicsPipeline *pipeline = pass_pipeline(&gpu.shaders[p->shader], formats, nt, p, draw >= 0);
     if (!pipeline) return;
 
     SDL_GPUTextureSamplerBinding inputs[BARE_MAX_INPUTS];
@@ -875,19 +987,36 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p) {
          * (ping-pong simulations) would get a new copy of its memory for
          * every write. */
         ct[i].load_op = p->blend == BARE_BLEND_NONE ? SDL_GPU_LOADOP_DONT_CARE : SDL_GPU_LOADOP_LOAD;
+        if (draw >= 0) {   /* a draw covers what its triangles cover: the rest stays, or is cleared */
+            ct[i].load_op = p->clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
+            ct[i].clear_color = (SDL_FColor){ p->clear_color[0], p->clear_color[1], p->clear_color[2],
+                                              p->clear_color[3] };
+        }
     }
     SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, ct, (Uint32)nt, NULL);
     if (!pass) return;
     SDL_BindGPUGraphicsPipeline(pass, pipeline);
     if (n) SDL_BindGPUFragmentSamplers(pass, 0, inputs, (Uint32)n);
     if (p->params_size > 0) SDL_PushGPUFragmentUniformData(cmd, 0, p->params, (Uint32)p->params_size);
-    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    if (draw < 0) {
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    } else {
+        if (p->params_size > 0) SDL_PushGPUVertexUniformData(cmd, 0, p->params, (Uint32)p->params_size);
+        SDL_GPUBufferBinding vb[2];
+        Uint32 nb = 0;
+        if (p->vertex_size > 0) vb[nb++] = (SDL_GPUBufferBinding){ gpu.draw_buf, gpu.draw_offsets[draw * 2] };
+        if (p->instance_size > 0) vb[nb++] = (SDL_GPUBufferBinding){ gpu.draw_buf, gpu.draw_offsets[draw * 2 + 1] };
+        if (nb) SDL_BindGPUVertexBuffers(pass, 0, vb, nb);
+        SDL_DrawGPUPrimitives(pass, (Uint32)p->vertex_count, (Uint32)SDL_max(1, p->instance_count), 0, 0);
+    }
     SDL_EndGPURenderPass(pass);
 }
 
 static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
     bool staged = stage_images(list);
+    bool drawable = stage_draws(cmd, list);
     Uint32 offset = 0;
+    int draws = 0;
     for (int i = 0; i < list->op_count; i++) {
         const BareGpuOp *op = &list->ops[i];
         switch (op->kind) {
@@ -906,7 +1035,11 @@ static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
         }
         case BARE_GPU_SHADER_CREATE: create_shader(&op->as.shader); break;
         case BARE_GPU_SHADER_DESTROY: destroy_shader(op->as.shader.id); break;
-        case BARE_GPU_PASS: run_pass(cmd, &op->as.pass); break;
+        case BARE_GPU_PASS: run_pass(cmd, &op->as.pass, -1); break;
+        case BARE_GPU_DRAW:
+            if (drawable) run_pass(cmd, &op->as.pass, draws);
+            draws++;
+            break;
         }
     }
     if (gpu.image_cap > STAGE_KEEP) {   /* released once the GPU is done with it */

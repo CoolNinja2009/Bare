@@ -1,5 +1,5 @@
 # bare_add_shaders(): compiles GLSL fragment shaders for canvas passes
-# (bare_pass) into a C header, at build time.
+# (bare_pass), and programs for draws (bare_draw), into a C header, at build time.
 #
 #   bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
 #                    SOURCES shaders/blur.glsl shaders/glow.glsl)
@@ -21,6 +21,24 @@
 #
 # Matching C struct for std140: floats and vec2s pack as in C, but a vec3 or
 # vec4 starts on a 16-byte boundary; use float[4] for them and pad by hand.
+#
+# A program (for bare_draw) is one file with both halves, each compiled with
+# BARE_VERTEX or BARE_FRAGMENT defined; BARE_PARAMS_SET is the params' set in
+# either. Vertex attributes are vec4 slots (declare float..vec4); the vertex
+# half reads no images.
+#
+#   #version 450
+#   layout(set = BARE_PARAMS_SET, binding = 0) uniform Params { vec4 tint; };
+#   #ifdef BARE_VERTEX
+#   layout(location = 0) in vec2 a_pos;              // per vertex
+#   layout(location = 1) in vec4 a_offset;           // per instance (after the vertex's)
+#   layout(location = 0) out vec2 v_local;
+#   void main() { v_local = a_pos; gl_Position = vec4(a_pos * 0.1 + a_offset.xy, 0.0, 1.0); }
+#   #else
+#   layout(location = 0) in vec2 v_local;
+#   layout(location = 0) out vec4 o_color;
+#   void main() { o_color = tint * (1.0 - length(v_local)); }
+#   #endif
 #
 # Needs glslc (Vulkan SDK) and SDL_shadercross. Without them the header that's
 # already there is used, so commit it and others can build without the tools.

@@ -787,6 +787,38 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
   your app costs nothing, which a page's endless `requestAnimationFrame` loop never does.
 - std140 in C: floats and `vec2`s pack as in C, but a `vec3` / `vec4` starts on a 16-byte boundary: use `float[4]`.
 
+**Drawing your own triangles** (WebGL's `drawArrays` / `drawArraysInstanced`): `bare_draw` runs a *program*, a
+`.glsl` file with a vertex half as well, over your vertex data, into a canvas:
+
+```c
+typedef struct { float pos[4], color[4]; } Vert;   /* each attribute is a vec4 slot */
+bare_draw(.target = sky, .shader = ribbon, .strip = true, BARE_VERTICES(verts, n), BARE_PARAMS(p));
+bare_draw(.target = sky, .shader = dots, .vertex_count = 6, BARE_INSTANCES(dots, 300),
+          .blend = BARE_BLEND_ALPHA, BARE_PARAMS(p));
+```
+
+```glsl
+#version 450
+layout(set = BARE_PARAMS_SET, binding = 0) uniform Params { vec4 res; };   // both halves may read it
+#ifdef BARE_VERTEX
+layout(location = 0) in vec2 a_pos;                       // the vertex's attributes, then the instance's
+layout(location = 1) in vec4 a_color;
+layout(location = 0) out vec4 v_color;
+void main() { v_color = a_color; gl_Position = vec4(a_pos / res.xy * 2.0 - 1.0, 0.0, 1.0); }
+#else
+layout(location = 0) in vec4 v_color;
+layout(location = 0) out vec4 o_color;
+void main() { o_color = v_color; }
+#endif
+```
+
+- Attributes are 16 bytes each (declare them `float` to `vec4`), so `.vertex_size` and `.instance_size` are multiples
+  of 16. Without `.vertices` the program makes its vertices from `gl_VertexIndex` (and `gl_InstanceIndex`).
+- A draw keeps what its triangles don't cover; `.clear = true, .clear_color = {...}` clears the targets first.
+- `.strip = true` for a triangle strip. `BARE_BLEND_ALPHA` is WebGL's `blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`.
+- Clip space is WebGL's: `y = 1` is the top of the picture, in a `.bottom_up` canvas too, so ported vertex shaders
+  work unchanged. `examples/draw/` shows a strip and instanced dots.
+
 `examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes (Screen+'s Fluids wallpaper), and `bench/` measures it against the same simulation running in Edge.
 
 ## 14. CSS to Bare cheat sheet
@@ -794,7 +826,7 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
 | CSS / HTML / JS | Bare |
 |---|---|
 | `<div>` | `bare_box(...)`, or `bare_row/column/stack(...) { }` with children |
-| `<canvas>` + WebGL shaders | `bare_canvas(...)`, `bare_pass(...)`, `.image = canvas` |
+| `<canvas>` + WebGL shaders | `bare_canvas(...)`, `bare_pass(...)`, `bare_draw(...)`, `.image = canvas` |
 | `devicePixelRatio` | `bare_pixel_scale()` |
 | `display: flex; flex-direction: row` | `bare_row() { }` |
 | `flex-direction: column` | `bare_column() { }` |
@@ -869,4 +901,4 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
 Bare is being built one milestone at a time ([ROADMAP](ROADMAP.md)): next a second backend and the browser (M9), then
 the rest of what CSS has (M10: gradients, per-corner radii, rotation, filters, flex-wrap...). The examples in
 `examples/` grow with it: `hello.c`, `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-`scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/` and `fluid/` today.
+`scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/`, `fluid/` and `draw/` today.
