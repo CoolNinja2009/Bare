@@ -779,6 +779,11 @@ bare_add_shaders(myapp OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/my_shaders.h
 - `.format`: `BARE_RGBA8` (default), or half floats for HDR colour and simulation state: `BARE_RGBA16F`,
   `BARE_RG16F` (e.g. velocity), `BARE_R16F` (e.g. pressure). `.nearest = true` turns off filtering;
   `.repeat = true` wraps sampling outside 0..1.
+- `.mipmaps = true` (WebGL's `generateMipmap`, done for you): the canvas keeps a mip chain, rebuilt after every pass or
+  draw into it, sampled trilinear with 8x anisotropic filtering. Use it for textures seen small or at grazing angles
+  (a baked detail texture across a floor or the sea): fine detail stays crisp up close and calm far away instead of
+  shimmering. `examples/ocean/` bakes one at startup (`detail.glsl`).
+- Up to 16 `.inputs` per pass or draw (WebGL2's minimum too).
 - `.blend`: `BARE_BLEND_NONE` (default: replace), `BARE_BLEND_ADD`, `BARE_BLEND_OVER`.
 - A pass can't read the canvas it writes. Ping-pong between two canvases instead, swapping them after each pass.
 - Size canvases in pixels: `bare_window_size()` times `bare_pixel_scale()` (`devicePixelRatio`) for a sharp
@@ -819,7 +824,24 @@ void main() { o_color = v_color; }
 - The vertex half may read `.inputs` too (`layout(set = 0, binding = n)`), e.g. a height field the geometry rides.
 - Shared code: `#extension GL_GOOGLE_include_directive : require`, `#include "common.glsl"` beside the shader. `examples/koi/` uses all of it.
 - Clip space is WebGL's: `y = 1` is the top of the picture, in a `.bottom_up` canvas too, so ported vertex shaders
-  work unchanged. `examples/draw/` shows a strip and instanced dots.
+  work unchanged. `examples/draw/` shows a strip, instanced dots and depth-tested cubes.
+
+**Depth** (WebGL's `DEPTH_TEST`): give the draw a depth canvas the size of its target, and the nearest triangle wins
+whatever order you draw in:
+
+```c
+BareImage depth = bare_canvas(.width = w, .height = h, .format = BARE_DEPTH);   /* starts at 1, far */
+bare_draw(.target = scene, .depth = depth, .clear_depth = true, .shader = cubes, .vertex_count = 36);
+bare_draw(.target = scene, .depth = depth, .depth_read_only = true, .blend = BARE_BLEND_ALPHA, ...);   /* glass, smoke */
+```
+
+- Depth runs 0 (near) to 1 (far), as in Vulkan and D3D (`gl_Position.z / w`); the default test is `BARE_DEPTH_LESS`.
+  `.depth_test` picks another (`LESS_EQUAL`, `GREATER`, `GREATER_EQUAL`, `EQUAL`, `ALWAYS`).
+- `.clear_depth = true` clears it first, to `.depth_clear` (0 means 1; `BARE_ZERO` for a real 0). For a float depth
+  buffer the most precise way is reversed depth: near at 1, clear to `BARE_ZERO`, test `BARE_DEPTH_GREATER`.
+- `.depth_read_only = true` tests without writing: transparent things drawn after the solid ones.
+- A depth canvas can be an `.input` of later passes (sampled nearest; `.r` is the depth): fog, depth of field, soft
+  particles. It can't be a draw's `.target` nor its own draw's input. `examples/ocean/` uses all of it.
 
 `examples/fluid/` is the full showcase: a GPU fluid simulation in 14 passes (Screen+'s Fluids wallpaper), and `bench/` measures it against the same simulation running in Edge.
 
@@ -829,6 +851,8 @@ void main() { o_color = v_color; }
 |---|---|
 | `<div>` | `bare_box(...)`, or `bare_row/column/stack(...) { }` with children |
 | `<canvas>` + WebGL shaders | `bare_canvas(...)`, `bare_pass(...)`, `bare_draw(...)`, `.image = canvas` |
+| `gl.enable(DEPTH_TEST)`, depth renderbuffer | `bare_canvas(.format = BARE_DEPTH)`, `bare_draw(.depth = ...)` |
+| `gl.generateMipmap`, `EXT_texture_filter_anisotropic` | `bare_canvas(.mipmaps = true)` |
 | `devicePixelRatio` | `bare_pixel_scale()` |
 | `display: flex; flex-direction: row` | `bare_row() { }` |
 | `flex-direction: column` | `bare_column() { }` |

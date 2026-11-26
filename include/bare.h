@@ -366,7 +366,9 @@ typedef enum BareFormat {
     BARE_RGBA16F,         /* half floats: HDR colour, simulation state */
     BARE_RG16F,           /* two half floats (e.g. velocity) */
     BARE_R16F,            /* one half float (e.g. pressure) */
-    BARE_RGBA32F          /* full floats, for data that must stay exact (half floats where unsupported) */
+    BARE_RGBA32F,         /* full floats, for data that must stay exact (half floats where unsupported) */
+    BARE_DEPTH            /* a depth buffer for bare_draw's .depth (32-bit float where supported); as an
+                             input it reads as depth in .r, 0 (near) to 1 (far) */
 } BareFormat;
 
 typedef struct BareCanvas {
@@ -376,6 +378,10 @@ typedef struct BareCanvas {
     bool repeat;          /* sampling outside 0..1 wraps (default: clamps to the edge) */
     bool bottom_up;       /* rows run bottom to top, as in WebGL (gl_FragCoord.y = 0 at the bottom):
                              .image shows it the right way up, so WebGL passes port unchanged */
+    bool mipmaps;         /* keep a mip chain, rebuilt after every pass or draw into it, and sample it trilinear
+                             with anisotropic filtering: fine detail stays crisp up close and calm far away or
+                             at grazing angles (WebGL's generateMipmap + EXT_texture_filter_anisotropic).
+                             Not for BARE_DEPTH; with .nearest only the full-size level is read */
 } BareCanvas;
 
 #define bare_canvas(...)  bare_canvas_(&(BareCanvas){ __VA_ARGS__ })
@@ -411,7 +417,7 @@ typedef enum BareBlend {
                              alpha as a + a_dst (1 - a), so an opaque canvas stays opaque */
 } BareBlend;
 
-#define BARE_MAX_INPUTS 8
+#define BARE_MAX_INPUTS 16   /* samplers per shader stage, as WebGL2 guarantees */
 #define BARE_MAX_TARGETS 4
 
 typedef struct BarePass {
@@ -443,7 +449,26 @@ typedef struct BarePass {
  * With no .vertices the program builds its vertices from gl_VertexIndex
  * (and gl_InstanceIndex). Clip space is WebGL's: in a bottom_up canvas, y = 1
  * is the top of the picture, as in a WebGL framebuffer. Vertex and instance
- * data are copied, up to 64 MB a draw. */
+ * data are copied, up to 64 MB a draw.
+ *
+ * Depth (WebGL's DEPTH_TEST): give a depth canvas the target's size, and what's
+ * behind what's already drawn stays hidden, whatever the order:
+ *
+ *   BareImage zbuf = bare_canvas(.width = w, .height = h, .format = BARE_DEPTH);
+ *   bare_draw(.target = scene, .depth = zbuf, .clear = true, .clear_depth = true, ...);  // the ground
+ *   bare_draw(.target = scene, .depth = zbuf, .depth_read_only = true, ...);           // soft particles
+ *
+ * Depth is gl_Position.z / w from 0 (near) to 1 (far), as Vulkan, Direct3D and
+ * Metal have it (WebGL's -1..1 maps there with z = z * 0.5 + w * 0.5). */
+typedef enum BareDepthTest {
+    BARE_DEPTH_LESS = 0,     /* default: drawn where nearer than what's there */
+    BARE_DEPTH_LESS_EQUAL,
+    BARE_DEPTH_GREATER,      /* reversed depth (clear to BARE_ZERO) */
+    BARE_DEPTH_GREATER_EQUAL,
+    BARE_DEPTH_EQUAL,
+    BARE_DEPTH_ALWAYS        /* never hidden; still written unless .depth_read_only */
+} BareDepthTest;
+
 typedef struct BareDraw {
     BareImage target;                   /* a canvas; not one of the inputs */
     BareShader shader;                  /* a program: its .glsl has a BARE_VERTEX half */
@@ -459,6 +484,11 @@ typedef struct BareDraw {
     bool strip;                         /* a triangle strip (default: a list, three vertices a triangle) */
     bool clear;                         /* clear the targets to .clear_color first */
     float clear_color[4];               /* straight RGBA, 0..1 (HDR canvases: any value) */
+    BareImage depth;                    /* a BARE_DEPTH canvas the target's size: depth-tested (0 = none) */
+    BareDepthTest depth_test;
+    bool depth_read_only;               /* test against it, don't write it (blended things over a scene) */
+    bool clear_depth;                   /* clear it to .depth_clear first (WebGL's DEPTH_BUFFER_BIT) */
+    float depth_clear;                  /* 0 = 1 (far); BARE_ZERO for 0 (reversed depth) */
 } BareDraw;
 
 #define bare_draw(...)    bare_draw_(&(BareDraw){ __VA_ARGS__ }, __FILE__, __LINE__)

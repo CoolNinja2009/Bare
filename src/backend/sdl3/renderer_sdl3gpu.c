@@ -42,6 +42,7 @@ typedef struct Texture {
     BareTexFormat        format;        /* glyph atlas uploads */
     SDL_GPUTextureFormat gpu_format;    /* images and canvases */
     SDL_GPUSampler      *sampler;       /* NULL = the default (bilinear, clamped) */
+    Uint32               levels;        /* mip levels: > 1 for canvases with .mipmaps */
 } Texture;
 
 /* An app shader for canvas passes and draws, with a pipeline per (target
@@ -52,10 +53,13 @@ typedef struct PassPipeline {
     BareBlend                blend;
     int                      vertex_size, instance_size;
     bool                     strip, flip;
+    SDL_GPUTextureFormat     depth_format;      /* INVALID: no depth buffer */
+    BareDepthTest            depth_test;
+    bool                     depth_write;
     SDL_GPUGraphicsPipeline *pipeline;
 } PassPipeline;
 
-#define MAX_PASS_PIPELINES 8
+#define MAX_PASS_PIPELINES 12
 
 typedef struct UserShader {
     SDL_GPUShader *fs;
@@ -76,6 +80,7 @@ typedef struct GpuRenderer {
     SDL_GPUTextureFormat     format;
     SDL_GPUSampler          *sampler, *mip_sampler;
     SDL_GPUSampler          *samplers[4];        /* [nearest][repeat]; [0][0] = sampler */
+    SDL_GPUSampler          *mip_samplers[2];    /* [repeat]: trilinear, anisotropic, for .mipmaps canvases */
     SDL_GPUShader           *pass_vs[2][2];      /* shaders/pass.glsl, [without v_uv][as DXBC] */
     SDL_GPUTexture          *white;
     SDL_GPUTexture          *scene, *backdrop;
@@ -294,6 +299,17 @@ static bool init(void *self, const BarePlatform *platform) {
         gpu.samplers[k] = k == 0 ? gpu.sampler : SDL_CreateGPUSampler(gpu.device, &si);
         if (!gpu.samplers[k]) return false;
     }
+    si.min_filter = si.mag_filter = SDL_GPU_FILTER_LINEAR;
+    si.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    si.max_lod = 16.0f;
+    si.enable_anisotropy = true;
+    si.max_anisotropy = 8.0f;
+    for (int k = 0; k < 2; k++) {
+        si.address_mode_u = si.address_mode_v = si.address_mode_w =
+            k ? SDL_GPU_SAMPLERADDRESSMODE_REPEAT : SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        gpu.mip_samplers[k] = SDL_CreateGPUSampler(gpu.device, &si);
+        if (!gpu.mip_samplers[k]) return false;
+    }
     /* The pass vertex shader with and without v_uv, each also as DXBC (on
      * D3D12) for fragment shaders made from DXBC: a pipeline can't mix them. */
     ShaderCode pass_v[2] = { CODE_DXBC(pass_vert, 0, 0), CODE_DXBC(pass_nouv_vert, 0, 0) };
@@ -338,6 +354,7 @@ static void shutdown_renderer(void *self) {
     for (Uint32 i = 0; i < gpu.shader_cap; i++) destroy_shader(i);
     SDL_free(gpu.shaders);
     for (int k = 1; k < 4; k++) SDL_ReleaseGPUSampler(gpu.device, gpu.samplers[k]);
+    for (int k = 0; k < 2; k++) SDL_ReleaseGPUSampler(gpu.device, gpu.mip_samplers[k]);
     for (int k = 0; k < 4; k++)
         if (gpu.pass_vs[k / 2][k % 2]) SDL_ReleaseGPUShader(gpu.device, gpu.pass_vs[k / 2][k % 2]);
     SDL_free(gpu.instances);
@@ -683,6 +700,24 @@ static void save_capture(Uint32 w, Uint32 h) {
 
 /* The first format the device can sample (and render to, for canvases);
  * narrower float formats fall back to wider ones, as WebGL apps do. */
+static bool is_depth_format(SDL_GPUTextureFormat f) {
+    return f == SDL_GPU_TEXTUREFORMAT_D32_FLOAT || f == SDL_GPU_TEXTUREFORMAT_D24_UNORM ||
+           f == SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+}
+
+/* Depth canvases: the most precise depth format, one that can be sampled if
+ * there is one (later passes read it: soft particles, fog by distance). */
+static SDL_GPUTextureFormat depth_format(SDL_GPUTextureUsageFlags *usage) {
+    static const SDL_GPUTextureFormat list[] = { SDL_GPU_TEXTUREFORMAT_D32_FLOAT, SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+                                                 SDL_GPU_TEXTUREFORMAT_D16_UNORM };
+    for (int sampled = 1; sampled >= 0; sampled--) {
+        *usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | (sampled ? SDL_GPU_TEXTUREUSAGE_SAMPLER : 0);
+        for (int i = 0; i < 3; i++)
+            if (SDL_GPUTextureSupportsFormat(gpu.device, list[i], SDL_GPU_TEXTURETYPE_2D, *usage)) return list[i];
+    }
+    return SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
 static SDL_GPUTextureFormat image_format(BareFormat f, bool renderable) {
     static const SDL_GPUTextureFormat floats[] = { SDL_GPU_TEXTUREFORMAT_R16_FLOAT, SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT,
                                                    SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT };
@@ -709,14 +744,18 @@ static void create_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
     if (!t) return;
     if (t->tex) SDL_ReleaseGPUTexture(gpu.device, t->tex);
     memset(t, 0, sizeof *t);
-    SDL_GPUTextureFormat f = image_format(im->format, im->renderable);
+    bool depth = im->format == BARE_DEPTH;
+    SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_SAMPLER |
+                                     (im->renderable ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
+    SDL_GPUTextureFormat f = depth ? depth_format(&usage) : image_format(im->format, im->renderable);
     if (f == SDL_GPU_TEXTUREFORMAT_INVALID) {
         SDL_Log("bare: no supported texture format for image %u (format %d)", (unsigned)im->id, (int)im->format);
         return;
     }
-    SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_SAMPLER |
-                                     (im->renderable ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
-    t->tex = make_texture(im->width, im->height, f, usage, 1);
+    Uint32 levels = 1;
+    if (im->mipmaps && im->renderable && !depth)
+        while ((im->width >> levels) > 0 || (im->height >> levels) > 0) levels++;
+    t->tex = make_texture(im->width, im->height, f, usage, levels);
     if (!t->tex) {
         SDL_Log("bare: creating a %dx%d image failed: %s", im->width, im->height, SDL_GetError());
         return;
@@ -724,14 +763,28 @@ static void create_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
     t->w = im->width;
     t->h = im->height;
     t->gpu_format = f;
-    t->sampler = gpu.samplers[(im->nearest ? 2 : 0) + (im->repeat ? 1 : 0)];
-    if (im->renderable) {   /* canvases start transparent black, not with leftover memory */
+    /* depth is sampled nearest: not every device filters depth formats */
+    t->sampler = gpu.samplers[(im->nearest || depth ? 2 : 0) + (im->repeat ? 1 : 0)];
+    t->levels = levels;
+    if (levels > 1 && !im->nearest) t->sampler = gpu.mip_samplers[im->repeat ? 1 : 0];
+    if (depth) {   /* depth starts far */
+        SDL_GPUDepthStencilTargetInfo dt;
+        SDL_zero(dt);
+        dt.texture = t->tex;
+        dt.clear_depth = 1.0f;
+        dt.load_op = SDL_GPU_LOADOP_CLEAR;
+        dt.store_op = SDL_GPU_STOREOP_STORE;
+        dt.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        dt.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, NULL, 0, &dt));
+    } else if (im->renderable) {   /* canvases start transparent black, not with leftover memory */
         SDL_GPUColorTargetInfo ct;
         SDL_zero(ct);
         ct.texture = t->tex;
         ct.load_op = SDL_GPU_LOADOP_CLEAR;
         ct.store_op = SDL_GPU_STOREOP_STORE;
         SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &ct, 1, NULL));
+        if (levels > 1) SDL_GenerateMipmapsForGPUTexture(cmd, t->tex);
     }
 }
 
@@ -816,15 +869,30 @@ static void create_shader(const BareGpuShader *sh) {
     }
 }
 
+static SDL_GPUCompareOp compare_op(BareDepthTest t) {
+    switch (t) {
+    case BARE_DEPTH_LESS_EQUAL: return SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    case BARE_DEPTH_GREATER: return SDL_GPU_COMPAREOP_GREATER;
+    case BARE_DEPTH_GREATER_EQUAL: return SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
+    case BARE_DEPTH_EQUAL: return SDL_GPU_COMPAREOP_EQUAL;
+    case BARE_DEPTH_ALWAYS: return SDL_GPU_COMPAREOP_ALWAYS;
+    default: return SDL_GPU_COMPAREOP_LESS;
+    }
+}
+
 static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextureFormat *formats, int n,
-                                              const BareGpuPass *op, bool draw) {
+                                              SDL_GPUTextureFormat zformat, const BareGpuPass *op, bool draw) {
     BareBlend blend = op->blend;
     int vsize = draw ? op->vertex_size : 0, isize = draw ? op->instance_size : 0;
     bool strip = draw && op->strip, flip = draw && op->flip;
+    bool zon = zformat != SDL_GPU_TEXTUREFORMAT_INVALID;
+    bool zwrite = zon && op->depth_write;
+    BareDepthTest ztest = zon ? op->depth_test : BARE_DEPTH_LESS;
     for (int k = 0; k < u->pipe_count; k++) {
         const PassPipeline *pp = &u->pipes[k];
         if (pp->targets == n && pp->blend == blend && pp->vertex_size == vsize && pp->instance_size == isize &&
-            pp->strip == strip && pp->flip == flip && !memcmp(pp->formats, formats, (size_t)n * sizeof *formats))
+            pp->strip == strip && pp->flip == flip && pp->depth_format == zformat && pp->depth_test == ztest &&
+            pp->depth_write == zwrite && !memcmp(pp->formats, formats, (size_t)n * sizeof *formats))
             return pp->pipeline;
     }
     if (u->pipe_count == MAX_PASS_PIPELINES) {
@@ -883,6 +951,13 @@ static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextur
     }
     info.target_info.color_target_descriptions = targets;
     info.target_info.num_color_targets = (Uint32)n;
+    if (zon) {
+        info.target_info.has_depth_stencil_target = true;
+        info.target_info.depth_stencil_format = zformat;
+        info.depth_stencil_state.enable_depth_test = true;
+        info.depth_stencil_state.enable_depth_write = zwrite;
+        info.depth_stencil_state.compare_op = compare_op(ztest);
+    }
     SDL_GPUGraphicsPipeline *p = SDL_CreateGPUGraphicsPipeline(gpu.device, &info);
     if (!p) {
         SDL_Log("bare: canvas pass pipeline failed: %s", SDL_GetError());
@@ -895,6 +970,7 @@ static SDL_GPUGraphicsPipeline *pass_pipeline(UserShader *u, const SDL_GPUTextur
     pp->blend = blend;
     pp->vertex_size = vsize, pp->instance_size = isize;
     pp->strip = strip, pp->flip = flip;
+    pp->depth_format = zformat, pp->depth_test = ztest, pp->depth_write = zwrite;
     pp->pipeline = p;
     return p;
 }
@@ -955,6 +1031,12 @@ static bool stage_draws(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {
 
 /* A pass (one triangle over the target) or a draw (`draw` >= 0: the frame's
  * draw number, for its data's place in draw_buf). */
+/* Canvases with .mipmaps get their chain rebuilt after each pass or draw into them. */
+static void update_mips(SDL_GPUCommandBuffer *cmd, Texture *const *t, int nt) {
+    for (int i = 0; i < nt; i++)
+        if (t[i]->levels > 1) SDL_GenerateMipmapsForGPUTexture(cmd, t[i]->tex);
+}
+
 static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) {
     if (p->shader >= gpu.shader_cap || !gpu.shaders[p->shader].fs) return;
     if (draw >= 0 && !gpu.shaders[p->shader].vs[0]) return;
@@ -969,7 +1051,15 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) 
         t[nt] = &gpu.textures[id];
         formats[nt++] = gpu.textures[id].gpu_format;
     }
-    SDL_GPUGraphicsPipeline *pipeline = pass_pipeline(&gpu.shaders[p->shader], formats, nt, p, draw >= 0);
+    /* A depth canvas (the core checked its size and format). */
+    Texture *z = NULL;
+    if (draw >= 0 && p->depth) {
+        if (p->depth >= gpu.texture_cap || !gpu.textures[p->depth].tex ||
+            !is_depth_format(gpu.textures[p->depth].gpu_format)) return;
+        z = &gpu.textures[p->depth];
+    }
+    SDL_GPUGraphicsPipeline *pipeline = pass_pipeline(&gpu.shaders[p->shader], formats, nt,
+                                                      z ? z->gpu_format : SDL_GPU_TEXTUREFORMAT_INVALID, p, draw >= 0);
     if (!pipeline) return;
 
     SDL_GPUTextureSamplerBinding inputs[BARE_MAX_INPUTS];
@@ -998,8 +1088,23 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) 
                                               p->clear_color[3] };
         }
     }
-    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, ct, (Uint32)nt, NULL);
+    SDL_GPUDepthStencilTargetInfo dt;
+    SDL_zero(dt);
+    if (z) {
+        dt.texture = z->tex;
+        dt.clear_depth = p->depth_clear;
+        dt.load_op = p->clear_depth ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
+        dt.store_op = SDL_GPU_STOREOP_STORE;
+        dt.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        dt.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+    }
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, ct, (Uint32)nt, z ? &dt : NULL);
     if (!pass) return;
+    if (draw >= 0 && p->vertex_count <= 0) {   /* only clearing */
+        SDL_EndGPURenderPass(pass);
+        update_mips(cmd, t, nt);
+        return;
+    }
     SDL_BindGPUGraphicsPipeline(pass, pipeline);
     if (n) SDL_BindGPUFragmentSamplers(pass, 0, inputs, (Uint32)n);
     if (nv) SDL_BindGPUVertexSamplers(pass, 0, inputs, (Uint32)nv);
@@ -1016,6 +1121,7 @@ static void run_pass(SDL_GPUCommandBuffer *cmd, const BareGpuPass *p, int draw) 
         SDL_DrawGPUPrimitives(pass, (Uint32)p->vertex_count, (Uint32)SDL_max(1, p->instance_count), 0, 0);
     }
     SDL_EndGPURenderPass(pass);
+    update_mips(cmd, t, nt);
 }
 
 static void run_ops(SDL_GPUCommandBuffer *cmd, const BareDrawList *list) {

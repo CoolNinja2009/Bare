@@ -150,6 +150,33 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 
 ## Current status
 
+**2026-11-26:** depth buffers for `bare_draw` (`BARE_DEPTH` canvases: D32F, falling back to D24 / D16, sampleable
+where possible; `.depth`, `.depth_test`, `.depth_read_only`, `.clear_depth`, `.depth_clear`; a depth canvas can be a
+later pass's input), tested in `tests/test_gpu.c`, shown by the cubes in `examples/draw/`. `examples/ocean/`: a
+Tessendorf FFT ocean (JONSWAP, three cascades 450 / 53 / 7.3 m in one atlas, Jacobian foam that builds and fades) on
+a polar ring mesh around the camera, sky and coast, glints, crest light, spray, Snell's window and murky water with
+light shafts from below, a lens that can straddle the waterline (meniscus), a camera that rides and leans with the
+swell (a 1×1 probe canvas), depth of field, motes and bubbles, bloom, ACES, a cool grade, grain and a 2.39 letterbox;
+WASD / Space / Shift to fly anywhere, above or under; a frosted glass panel of sliders. Tuned against a UE5 water
+clip the user gave (overcast, low camera): the water's mean colour matches it closely, the sky and foam less so.
+~5-8 ms a frame at 1600×900. D3D12 and Vulkan agree to within 2/255 on 99.75% of pixels: foam and spray flecks
+differ where float drift tips a threshold over many frames (the FFT's sin/cos differ per driver), so not pixel-identical.
+Later the same day: `bare_canvas(.mipmaps = true)` (chain rebuilt after each pass or draw, trilinear + 8x anisotropic)
+and `BARE_MAX_INPUTS` 16, both tested in `tests/test_gpu.c`. The ocean bakes a 4 m detail tile at startup
+(`detail.glsl`: 160 ripples 3-30 cm long that tile seamlessly, bubbly foam pitted with holes of three sizes, foam
+lace); two drifting layers of it roughen the surface, varying with gusts (cat's paws), calm slicks and which wave
+faces meet the wind; the cascades' derivatives are mipmapped too, and the lens focuses on the middle of the picture
+(never beyond 4.5 m). D3D12 vs Vulkan now differ on ~5% of pixels at more than 2/255 (0.5% at more than 20/255):
+foam and ripples, from per-driver float maths in the simulation (1.4% with mipmaps off) and SDL's mip generation.
+Then the look again, measured against the clip: an overcast sky brightest overhead (CIE overcast), a cloud deck
+whose thin parts glow and thick parts darken, breaking up towards the sun, a dark low deck with a pale strip at the
+horizon; a contrast S-curve and teal split tone in `final.glsl`; less saturated water; a young wind sea (17 m/s over
+10 km of fetch, chop 1.45, foam 0.8). Sky colour now within ~10/255 of the clip; the water is still a little bluer.
+Then a lens shade in `final.glsl` with Cinema on (light falls off around a point up and right of centre: the left
+side and bottom go dark, as measured off the clip), and whitecaps gathered into wave groups (non-repeating noise moving
+at the group speed, the long waves' crests and gusts) instead of repeating with the 53 m and 7.3 m tiles; the
+displacement maps are mipmapped and far foam shows as its coverage, not a threshold.
+
 **2026-11-25:** frameless windows (`bare_window_with`, `.window_drag`, `bare_window_minimize/maximize/close`) and
 `bare_window_backdrop()` (Windows: the live desktop behind the window by DXGI Desktop Duplication on a worker thread,
 the window excluded from capture with `WDA_EXCLUDEFROMCAPTURE` only while it moves, capturable at rest; `src/backend/backdrop_win32.c`), so glass bends what's
@@ -167,7 +194,7 @@ The user put M9 (sokol) and M10 (web parity) on hold. Open: the hand checks belo
 - Works: window (hidden until the first frame), SDL3 GPU renderer (D3D12 and Vulkan give pixel-identical output),
   instanced SDF boxes with radius, border, Gaussian shadow, opacity; idle CPU 0 after startup; clean close.
   Examples: `hello.c` (the 8-line program), `shapes.c`, `glass.c`, `layout.c`, `buttons.c`, `cards.c`, `text.c`,
-  `scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/`, `fluid/`. 13 test programs
+  `scroll.c`, `styles.c`, `editor.c`, `widgets.c`, `code.c`, `write/`, `glass_motion/`, `fluid/`, `draw/`, `ocean/`. 14 test programs
   pass on GCC and MSVC; everything builds warning-free on both. Bare also builds as a subproject
   (`add_subdirectory`), with tests and examples off by default there.
 - Layout (M2): rows, columns, stacks; fit / fixed / grow (CSS flex: 1 with freezing at min/max) / percent / BARE_ZERO;
@@ -204,7 +231,7 @@ The user put M9 (sokol) and M10 (web parity) on hold. Open: the hand checks belo
   fit-content, so text wraps at its parent's width. `examples/text.c` (paragraph, sizes 10-48, alignment, avatar, a
   glass loupe over the text); captures identical on D3D12, Vulkan and MSVC. Text on glass and glass refracting text
   both work: the fluid panel has real labels on frosted glass, `glass_motion` has "Play" and "Add".
-- Canvas: `bare_canvas` (RGBA8 / RGBA16F / RG16F / R16F, nearest, repeat), `bare_shader`, `bare_pass` (up to 8
+- Canvas: `bare_canvas` (RGBA8 / RGBA16F / RG16F / R16F, nearest, repeat), `bare_shader`, `bare_pass` (up to 16
   inputs, std140 params, blend none/add/over), `bare_add_shaders()` in CMake, `.image` boxes, `bare_image_size`,
   `bare_image_from_pixels`, `bare_pixel_scale()`. GPU ops are queued in `src/core/gpu.c` and run by the renderer
   before the frame. `examples/fluid/` ports Pavel Dobryakov's WebGL fluid sim (MIT; Lively defaults) with a frosted

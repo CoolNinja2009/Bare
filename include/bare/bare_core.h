@@ -131,6 +131,7 @@ typedef struct BareGpuImage {
     BareFormat  format;
     bool        nearest, repeat;
     bool        renderable;    /* a canvas: passes draw into it */
+    bool        mipmaps;       /* a canvas with a mip chain, rebuilt after each pass or draw into it */
     const void *pixels;        /* IMAGE_UPLOAD */
 } BareGpuImage;
 
@@ -152,6 +153,10 @@ typedef struct BareGpuPass {
     int         vertex_size, vertex_count, instance_size, instance_count;
     bool        strip, clear, flip;              /* flip: the target is bottom_up (gl_Position.y negated) */
     float       clear_color[4];
+    uint32_t    depth;                           /* a BARE_DEPTH canvas, 0 = none */
+    BareDepthTest depth_test;
+    bool        depth_write, clear_depth;
+    float       depth_clear;                     /* the value itself (1 = far) */
 } BareGpuPass;
 
 typedef struct BareGpuOp {

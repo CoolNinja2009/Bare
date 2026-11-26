@@ -6,6 +6,7 @@
  * collects new calls while the renderer reads the other, so their bytes stay
  * valid and, once grown, no frame allocates. */
 #include "internal.h"
+#include <math.h>
 #include <string.h>
 
 #define MAX_PARAMS 4096   /* WebGL guarantees 224 vec4s (3584 bytes); SDL's uniform buffers hold 32 KB */
@@ -133,7 +134,7 @@ static bool valid_size(BareContext *ctx, const char *what, int w, int h) {
 BareImage bare_canvas_(const BareCanvas *c) {
     BareContext *ctx = need_ctx("bare_canvas");
     if (!ctx || !valid_size(ctx, "bare_canvas", c->width, c->height)) return 0;
-    if (c->format < BARE_RGBA8 || c->format > BARE_RGBA32F) {
+    if (c->format < BARE_RGBA8 || c->format > BARE_DEPTH) {
         bare__log(ctx, "bare_canvas: unknown format %d", (int)c->format);
         return 0;
     }
@@ -142,8 +143,14 @@ BareImage bare_canvas_(const BareCanvas *c) {
     BareImage id = new_image(ctx, c->width, c->height, c->format, true);
     if (!id) { ctx->gpu_pending.count--; return 0; }
     ctx->images[id - 1].bottom_up = c->bottom_up;
+    bool mipmaps = c->mipmaps;
+    if (mipmaps && c->format == BARE_DEPTH) {
+        bare__log(ctx, "bare_canvas: a BARE_DEPTH canvas can't have .mipmaps (ignored)");
+        mipmaps = false;
+    }
     op->as.image = (BareGpuImage){ .id = id, .width = c->width, .height = c->height, .format = c->format,
-                                   .nearest = c->nearest, .repeat = c->repeat, .renderable = true };
+                                   .nearest = c->nearest, .repeat = c->repeat, .renderable = true,
+                                   .mipmaps = mipmaps };
     return id;
 }
 
@@ -285,6 +292,10 @@ static const BareShaderRec *check_common(BareContext *ctx, const char *what, con
         bare__log(ctx, "%s at %s:%d: .target must be a live canvas (from bare_canvas)", what, file, line);
         return NULL;
     }
+    if (target->format == BARE_DEPTH) {
+        bare__log(ctx, "%s at %s:%d: .target is a depth canvas; draw with it as .depth", what, file, line);
+        return NULL;
+    }
     for (int i = 0; i < BARE_MAX_TARGETS - 1; i++) {
         if (!extra_targets[i]) continue;
         if (i > 0 && !extra_targets[i - 1]) {
@@ -292,8 +303,9 @@ static const BareShaderRec *check_common(BareContext *ctx, const char *what, con
             return NULL;
         }
         const BareImageRec *t = bare__image(ctx, extra_targets[i]);
-        if (!t || !t->canvas) {
-            bare__log(ctx, "%s at %s:%d: .extra_targets[%d] must be a live canvas", what, file, line, i);
+        if (!t || !t->canvas || t->format == BARE_DEPTH) {
+            bare__log(ctx, "%s at %s:%d: .extra_targets[%d] must be a live colour canvas (not BARE_DEPTH)", what,
+                      file, line, i);
             return NULL;
         }
         if (t->width != target->width || t->height != target->height) {
@@ -400,7 +412,30 @@ void bare_draw_(const BareDraw *d, const char *file, int line) {
         bare__log(ctx, "bare_draw at %s:%d: unknown .blend %d", file, line, (int)d->blend);
         return;
     }
-    if (d->vertex_count <= 0) return;   /* nothing to draw, as WebGL */
+    if (d->depth || d->depth_test || d->depth_read_only || d->clear_depth) {
+        const BareImageRec *z = bare__image(ctx, d->depth), *t = bare__image(ctx, d->target);
+        if (!z || !z->canvas || z->format != BARE_DEPTH) {
+            bare__log(ctx, "bare_draw at %s:%d: .depth must be a live canvas made with .format = BARE_DEPTH",
+                      file, line);
+            return;
+        }
+        if (z->width != t->width || z->height != t->height) {
+            bare__log(ctx, "bare_draw at %s:%d: .depth is %dx%d, .target is %dx%d; they must match", file, line,
+                      z->width, z->height, t->width, t->height);
+            return;
+        }
+        for (int i = 0; i < BARE_MAX_INPUTS; i++) {
+            if (d->inputs[i] == d->depth) {
+                bare__log(ctx, "bare_draw at %s:%d: input %d is also .depth; copy it first", file, line, i);
+                return;
+            }
+        }
+        if (d->depth_test < BARE_DEPTH_LESS || d->depth_test > BARE_DEPTH_ALWAYS) {
+            bare__log(ctx, "bare_draw at %s:%d: unknown .depth_test %d", file, line, (int)d->depth_test);
+            return;
+        }
+    }
+    if (d->vertex_count <= 0 && !d->clear && !d->clear_depth) return;   /* nothing to draw, as WebGL */
     if (d->instances && d->instance_count <= 0) return;
     int vslots = d->vertices ? d->vertex_size / 16 : 0, islots = d->instances ? d->instance_size / 16 : 0;
     if ((d->vertices && (d->vertex_size <= 0 || d->vertex_size % 16)) ||
@@ -438,4 +473,11 @@ void bare_draw_(const BareDraw *d, const char *file, int line) {
     g->clear = d->clear;
     g->flip = bare__image(ctx, d->target)->bottom_up;
     for (int i = 0; i < 4; i++) g->clear_color[i] = d->clear_color[i];
+    if (d->depth) {
+        g->depth = d->depth;
+        g->depth_test = d->depth_test;
+        g->depth_write = !d->depth_read_only;
+        g->clear_depth = d->clear_depth;
+        g->depth_clear = d->depth_clear == 0 && !signbit(d->depth_clear) ? 1.0f : d->depth_clear;
+    }
 }

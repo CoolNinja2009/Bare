@@ -28,12 +28,12 @@ bare_add_shaders(glass_motion OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/glass_motion/ge
     glass_motion/shaders/dunes.glsl glass_motion/shaders/petals.glsl glass_motion/shaders/wheel.glsl
     glass_motion/shaders/icons.glsl)
 
-# Draw: your own triangles (bare_draw): a strip and instanced dots.
+# Draw: your own triangles (bare_draw): a strip, instanced dots and depth-tested cubes.
 add_executable(draw draw/draw.c)
 target_link_libraries(draw PRIVATE bare)
 target_compile_options(draw PRIVATE ${BARE_WARNINGS})
 bare_add_shaders(draw OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/draw/generated/draw_shaders.h SOURCES
-    draw/shaders/ribbon.glsl draw/shaders/dots.glsl)
+    draw/shaders/ribbon.glsl draw/shaders/dots.glsl draw/shaders/cubes.glsl)
 
 # Singularity: a black hole ray traced in real time; a pixel-exact port of a
 # Screen+ web wallpaper (two render targets, a 32-bit float buffer, bloom).
@@ -65,3 +65,26 @@ if(WIN32)
 endif()
 bare_add_shaders(aurora OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/aurora/generated/aurora_shaders.h SOURCES
     aurora/shaders/aurora.glsl)
+
+# Ocean: the open sea simulated on the GPU (Tessendorf FFT waves in three
+# cascades, foam, spray), drawn as a mesh with a depth buffer; fly above and under it.
+add_executable(ocean ocean/ocean.c)
+target_link_libraries(ocean PRIVATE bare)
+target_compile_options(ocean PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(ocean OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/ocean/generated/ocean_shaders.h SOURCES
+    ocean/shaders/spectrum.glsl ocean/shaders/evolve.glsl ocean/shaders/fft.glsl ocean/shaders/assemble.glsl
+    ocean/shaders/probe.glsl ocean/shaders/skymap.glsl ocean/shaders/sky.glsl ocean/shaders/ocean.glsl
+    ocean/shaders/spray.glsl ocean/shaders/water.glsl ocean/shaders/dof.glsl ocean/shaders/motes.glsl
+    ocean/shaders/detail.glsl ocean/shaders/down.glsl ocean/shaders/up.glsl
+    ocean/shaders/final.glsl)
+
+# Water: a copy of the Ocean example to build on.
+add_executable(water water/water.c)
+target_link_libraries(water PRIVATE bare)
+target_compile_options(water PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(water OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/water/generated/water_shaders.h SOURCES
+    water/shaders/spectrum.glsl water/shaders/evolve.glsl water/shaders/fft.glsl water/shaders/assemble.glsl
+    water/shaders/probe.glsl water/shaders/skymap.glsl water/shaders/sky.glsl water/shaders/ocean.glsl
+    water/shaders/spray.glsl water/shaders/water.glsl water/shaders/dof.glsl water/shaders/motes.glsl
+    water/shaders/detail.glsl water/shaders/down.glsl water/shaders/up.glsl
+    water/shaders/final.glsl)

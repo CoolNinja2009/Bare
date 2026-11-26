@@ -104,7 +104,7 @@ Done 2026-11-23. What `<canvas>` + WebGL are to a web page, as general features 
 - `bare_canvas(.width, .height, .format, .nearest, .repeat)`: an image shaders draw into; RGBA8, RGBA16F, RG16F, R16F
   (narrow float formats fall back to wider ones where unsupported, as WebGL apps do). Starts transparent black.
 - `bare_shader(&code)` / `bare_pass(.target, .shader, .inputs = {...}, BARE_PARAMS(p), .blend)`: a fragment shader
-  over every pixel of the target (one fullscreen triangle, `shaders/pass.glsl`); up to 8 inputs; params as a std140
+  over every pixel of the target (one fullscreen triangle, `shaders/pass.glsl`); up to 16 inputs (8 until 2026-11-26); params as a std140
   block; blend NONE / ADD / OVER. Passes run on the GPU in call order before the frame is drawn.
 - `bare_add_shaders()` (CMake): GLSL 450 → SPIR-V + DXIL + MSL + reflection, into a header of `BareShaderCode`
   values; falls back to the committed header without the tools.
@@ -112,6 +112,11 @@ Done 2026-11-23. What `<canvas>` + WebGL are to a web page, as general features 
   Screen+'s Koi Pond): WebGL's drawArrays / drawArraysInstanced with a program (a .glsl with a `BARE_VERTEX` half);
   vec4 attributes, the frame's vertex data in one buffer; `BARE_BLEND_ALPHA`; WebGL's clip space in bottom_up canvases
   (a second vertex half with y negated).
+- Depth (2026-11-26, for `examples/ocean/`): `BARE_DEPTH` canvases (D32 float, falling back to D24 / D16; sampleable
+  where the GPU allows), `bare_draw(.depth, .depth_test, .depth_read_only, .clear_depth, .depth_clear)`; a depth
+  canvas can be a later pass's input (fog, depth of field).
+- `bare_canvas(.mipmaps = true)` (2026-11-26): a mip chain rebuilt after every pass or draw into the canvas, sampled
+  trilinear with 8x anisotropic filtering; `BARE_MAX_INPUTS` raised from 8 to 16 (SDL GPU's and WebGL2's limit).
 - `.image` boxes (images and canvases) drawn over `.color`, rounded by `.radius`, under the border.
   `bare_image_size`, `bare_pixel_scale()` (devicePixelRatio).
 - Core: GPU ops queued in call order (`src/core/gpu.c`), published with the frame's draw list; images and canvases
@@ -426,7 +431,10 @@ needed; **beyond** = something the web can't do as easily.
 | `<img>`, `object-fit` | `.image`, `bare_image_load` (PNG, JPEG, BMP, GIF, TGA); object-fit in M10 | done |
 | `<canvas>` + WebGL / WebGL2 fragment shaders, render to texture | `bare_canvas`, `bare_shader`, `bare_pass` | done |
 | `drawArrays`, `drawArraysInstanced`, vertex buffers | `bare_draw`, `BARE_VERTICES`, `BARE_INSTANCES` | done |
+| depth buffer, `DEPTH_TEST`, `depthFunc`, `depthMask`, depth textures | `BARE_DEPTH`, `.depth`, `.depth_test`, `.depth_read_only` | done |
 | float textures (`RGBA16F`, `RG16F`, `R16F`), additive blending | `.format`, `.blend = BARE_BLEND_ADD` | done |
+| `generateMipmap`, trilinear + anisotropic filtering | `bare_canvas(.mipmaps = true)` (rebuilt after each pass) | done |
+| 16 texture units | `BARE_MAX_INPUTS` 16 | done |
 | `devicePixelRatio` | `bare_pixel_scale()` | done |
 | `texImage2D` updates every frame (video), `readPixels`, compute | | later |
 | **Transforms and animation** | | |

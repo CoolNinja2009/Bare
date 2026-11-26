@@ -5,6 +5,8 @@
  *             (or a path of its own while the cursor rests)
  *   dots:     300 soft dots, one instance each, their quads built from
  *             gl_VertexIndex, blended with straight alpha
+ *   cubes:    two spinning cubes passing through each other, sorted by a
+ *             depth canvas (BARE_DEPTH) rather than by drawing order
  *
  * The canvas is bottom_up, as a WebGL framebuffer: the shaders' clip space is
  * WebGL's and the picture still shows the right way up. */
@@ -23,7 +25,8 @@ static float rnd(void) { return (float)rand() / (float)RAND_MAX; }
 int main(void) {
     if (!bare_window(1280, 720, "Bare: draw")) return 1;
     BareShader ribbon = bare_shader(&ribbon_shader), dots = bare_shader(&dots_shader);
-    BareImage canvas = 0;
+    BareShader cubes = bare_shader(&cubes_shader);
+    BareImage canvas = 0, depth = 0;
     int cw = 0, ch = 0;
 
     static float trail[TRAIL][2];
@@ -41,8 +44,9 @@ int main(void) {
         int w = (int)lroundf(win.x * scale), h = (int)lroundf(win.y * scale);
         if (w < 1 || h < 1) continue;
         if (w != cw || h != ch) {
-            if (canvas) bare_image_free(canvas);
+            if (canvas) bare_image_free(canvas), bare_image_free(depth);
             canvas = bare_canvas(.width = w, .height = h, .bottom_up = true);
+            depth = bare_canvas(.width = w, .height = h, .format = BARE_DEPTH);
             cw = w, ch = h;
         }
         bare_box(.width = BARE_GROW, .height = BARE_GROW, .image = canvas, .color = BARE_RGBA(12, 14, 24, 255));
@@ -84,9 +88,11 @@ int main(void) {
             inst[i].color[3] = 0.25f + 0.5f * seed[i][3];
         }
 
-        float res[4] = { (float)w, (float)h, 0, 0 };
+        float res[4] = { (float)w, (float)h, (float)t, 0 };
         bare_draw(.target = canvas, .shader = dots, .clear = true, .clear_color = { 0.05f, 0.055f, 0.09f, 1 },
                   .vertex_count = 6, BARE_INSTANCES(inst, DOTS), .blend = BARE_BLEND_ALPHA, BARE_PARAMS(res));
+        bare_draw(.target = canvas, .depth = depth, .clear_depth = true, .shader = cubes,
+                  .vertex_count = 36, .instance_count = 2, BARE_PARAMS(res));
         bare_draw(.target = canvas, .shader = ribbon, .strip = true, BARE_VERTICES(strip, TRAIL * 2),
                   BARE_PARAMS(res));
         bare_continuous(true);

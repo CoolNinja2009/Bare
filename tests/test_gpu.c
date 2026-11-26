@@ -208,7 +208,92 @@ TEST(invalid_handles_and_target_slots) {
     teardown();
 }
 
+static const BareShaderCode program = { .spirv = fake_spirv, .spirv_size = 4, .samplers = 1,
+                                        .vert_spirv = { fake_spirv, fake_spirv }, .vert_spirv_size = { 4, 4 },
+                                        .vert_inputs = 1, .vert_samplers = 1 };
+
+static const BareShaderCode sixteen = { .spirv = fake_spirv, .spirv_size = 4, .samplers = 16 };
+
+TEST(a_pass_takes_sixteen_inputs) {
+    setup();
+    BareImage c[17];
+    for (int i = 0; i < 17; i++) c[i] = bare_canvas(.width = 8, .height = 8);
+    BareShader sh = bare_shader(&sixteen);
+    bare_pass(.target = c[16], .shader = sh, .inputs = { c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9],
+                                                         c[10], c[11], c[12], c[13], c[14], c[15] });
+    const BareDrawList *l = frame();
+    const BareGpuPass *g = &l->ops[l->op_count - 1].as.pass;
+    CHECK(l->ops[l->op_count - 1].kind == BARE_GPU_PASS && g->input_count == 16 && g->inputs[15] == c[15]);
+    CHECK(log_count == 0);
+    teardown();
+}
+
+TEST(canvases_ask_for_mipmaps) {
+    setup();
+    BareImage a = bare_canvas(.width = 64, .height = 16, .format = BARE_RGBA16F, .repeat = true, .mipmaps = true);
+    BareImage b = bare_canvas(.width = 64, .height = 16);
+    BareImage z = bare_canvas(.width = 64, .height = 16, .format = BARE_DEPTH, .mipmaps = true);
+    const BareDrawList *l = frame();
+    CHECK(a && b && z && l->op_count == 3);
+    CHECK(l->ops[0].as.image.mipmaps && l->ops[0].as.image.repeat);
+    CHECK(!l->ops[1].as.image.mipmaps);
+    CHECK(!l->ops[2].as.image.mipmaps && log_count == 1 && strstr(last_log, "mipmaps"));   /* depth: ignored, said */
+    teardown();
+}
+
+TEST(draws_test_and_write_depth) {
+    setup();
+    BareImage scene = bare_canvas(.width = 64, .height = 32, .format = BARE_RGBA16F);
+    BareImage zbuf = bare_canvas(.width = 64, .height = 32, .format = BARE_DEPTH);
+    BareImage small = bare_canvas(.width = 32, .height = 32, .format = BARE_DEPTH);
+    BareShader sh = bare_shader(&program);
+    float tri[3][4] = { { 0 } };
+    const BareDrawList *l = frame();
+    CHECK(l->op_count == 4 && l->ops[1].as.image.format == BARE_DEPTH && l->ops[1].as.image.renderable);
+
+    bare_draw(.target = scene, .shader = sh, .depth = zbuf, .clear_depth = true, BARE_VERTICES(tri, 3));
+    bare_draw(.target = scene, .shader = sh, .depth = zbuf, .depth_read_only = true,
+              .depth_test = BARE_DEPTH_LESS_EQUAL, BARE_VERTICES(tri, 3));
+    bare_draw(.target = scene, .shader = sh, .depth = zbuf, .clear_depth = true, .depth_clear = BARE_ZERO,
+              .depth_test = BARE_DEPTH_GREATER, BARE_VERTICES(tri, 3));
+    bare_draw(.target = scene, .shader = sh, .depth = zbuf, .clear = true, .clear_depth = true,
+              BARE_VERTICES(tri, 0));   /* clears only, as gl.clear */
+    bare_draw(.target = scene, .shader = sh, BARE_VERTICES(tri, 3));
+    CHECK(log_count == 0);
+    l = frame();
+    CHECK(l->op_count == 5);
+    const BareGpuPass *a = &l->ops[0].as.pass, *b = &l->ops[1].as.pass, *c = &l->ops[2].as.pass;
+    CHECK(a->depth == zbuf && a->depth_write && a->clear_depth && a->depth_test == BARE_DEPTH_LESS);
+    CHECK_NEAR(a->depth_clear, 1, 0);
+    CHECK(b->depth == zbuf && !b->depth_write && !b->clear_depth && b->depth_test == BARE_DEPTH_LESS_EQUAL);
+    CHECK(c->depth_test == BARE_DEPTH_GREATER && c->depth_clear == 0);
+    CHECK(l->ops[3].as.pass.vertex_count == 0 && l->ops[3].as.pass.clear && l->ops[3].as.pass.clear_depth);
+    CHECK(l->ops[4].as.pass.depth == 0 && !l->ops[4].as.pass.depth_write);
+
+    /* mistakes: wrong size, not a depth canvas, depth as target or input */
+    bare_draw(.target = scene, .shader = sh, .depth = small, BARE_VERTICES(tri, 3));
+    CHECK(strstr(last_log, "must match") != NULL);
+    bare_draw(.target = scene, .shader = sh, .depth = scene, BARE_VERTICES(tri, 3));
+    CHECK(strstr(last_log, "BARE_DEPTH") != NULL);
+    bare_draw(.target = zbuf, .shader = sh, BARE_VERTICES(tri, 3));
+    CHECK(strstr(last_log, "as .depth") != NULL);
+    bare_draw(.target = scene, .shader = sh, .depth = zbuf, .inputs = { zbuf }, BARE_VERTICES(tri, 3));
+    CHECK(strstr(last_log, "also .depth") != NULL);
+    bare_draw(.target = scene, .shader = sh, .depth_read_only = true, BARE_VERTICES(tri, 3));
+    CHECK(strstr(last_log, "BARE_DEPTH") != NULL);
+    CHECK(log_count == 5);
+    CHECK(frame()->op_count == 0);
+
+    /* a depth canvas is an input like any other in a later draw or pass */
+    bare_draw(.target = scene, .shader = sh, .inputs = { zbuf }, BARE_VERTICES(tri, 3));
+    CHECK(frame()->op_count == 1);
+    teardown();
+}
+
 int main(void) {
+    RUN(a_pass_takes_sixteen_inputs);
+    RUN(canvases_ask_for_mipmaps);
+    RUN(draws_test_and_write_depth);
     RUN(invalid_handles_and_target_slots);
     RUN(ops_reach_the_next_draw_list_once_and_in_order);
     RUN(passes_every_frame_reuse_memory);
