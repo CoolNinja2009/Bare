@@ -3,7 +3,9 @@ foreach(name hello shapes glass layout buttons cards text scroll styles editor w
     target_link_libraries(${name} PRIVATE bare)
     target_compile_options(${name} PRIVATE ${BARE_WARNINGS})
 endforeach()
-target_compile_definitions(text PRIVATE ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets/")
+# Where text.c finds avatar.png: the source tree, or "assets/" beside the exe for packaged builds.
+set(BARE_EXAMPLE_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/assets/" CACHE STRING "Folder the examples load their files from")
+target_compile_definitions(text PRIVATE ASSETS="${BARE_EXAMPLE_ASSETS}")
 
 # Write: a Markdown and plain text editor on liquid glass.
 add_executable(write write/write.c write/md.c)

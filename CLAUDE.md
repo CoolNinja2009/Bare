@@ -127,6 +127,9 @@ ctest --test-dir build-msvc -C Debug --output-on-failure
 
 Options: `-DBARE_BACKEND=SDL3|SOKOL`, `-DBARE_BUILD_TESTS=ON`, `-DBARE_BUILD_EXAMPLES=ON`,
 `-DBARE_DEFAULT_FONT=ON`, `-DBARE_BUILD_BENCH=ON` (Release; see `bench/README.md`). Regenerate shader blobs: `cmake --build build --target bare_shaders`.
+CI: `.github/workflows/examples.yml` builds and tests on Windows (MSVC, static CRT), Linux (Ubuntu) and macOS (Apple
+silicon) on every push to main that touches source (not README, licence or docs), then publishes every example as a
+release `build-N`. Packaged builds set `-DBARE_EXAMPLE_ASSETS=assets/` (files beside the exe, relative to the working directory).
 Both compilers must build warning-free; the API header is checked with `-Wall -Wextra -Wpedantic -Wshadow` and `/W4`.
 
 ## Session workflow
@@ -149,6 +152,12 @@ then update `bench/README.md` and the **Optimizations** list below. Keep `docs/G
 - GCC and MSVC Debug builds and headless suites passed before the final document regression; see current audit validation for the final run. MSVC reports existing CRT deprecation and Singularity C4701 warnings.
 
 ## Current status
+
+**2026-11-26, Linux:** built and run on Arch Linux (the user's VirtualBox VM, `ssh -p 2222 coolninja@localhost`,
+repo in `~/src/Bare`): GCC builds warning-free, all 14 test suites pass, and 17 examples render correctly when captured
+with `SDL_VIDEO_DRIVER=offscreen` on Mesa's software Vulkan (lavapipe; the VM has no GPU Vulkan). One fix: generated
+shader headers wrote `NULL`, which `bare.h` doesn't define off Windows; they write `0` now. Not checked: a real X11 /
+Wayland window, input, or a hardware GPU on Linux; `bare_picture` and backdrops have no Linux backend.
 
 **2026-11-26:** depth buffers for `bare_draw` (`BARE_DEPTH` canvases: D32F, falling back to D24 / D16, sampleable
 where possible; `.depth`, `.depth_test`, `.depth_read_only`, `.clear_depth`, `.depth_clear`; a depth canvas can be a

@@ -1,0 +1,115 @@
+# Builds every example on Windows, Linux and macOS and publishes them as a GitHub release.
+# Runs on pushes to main that touch source code (README, licence and docs don't), or by hand.
+name: Examples
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "shaders/**"
+      - "examples/**"
+      - "cmake/**"
+      - "assets/**"
+      - "tests/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/examples.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # one system failing still releases the others
+      matrix:
+        include:
+          - { name: windows, os: windows-latest }
+          - { name: linux,   os: ubuntu-24.04 }
+          - { name: macos,   os: macos-latest }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux packages (SDL3's X11, Wayland and audio headers)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libdrm-dev libgbm-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev
+
+      - name: Configure
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            gen=(-G "Visual Studio 17 2022" -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)   # no VC++ redistributable needed
+          else
+            command -v ninja >/dev/null || brew install ninja
+            gen=(-G Ninja -DCMAKE_BUILD_TYPE=Release)
+          fi
+          cmake -S . -B build "${gen[@]}" \
+            -DBARE_BUILD_EXAMPLES=ON -DBARE_BUILD_TESTS=ON -DBARE_EXAMPLE_ASSETS=assets/
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        run: |
+          bin=build/bin; [ -d build/bin/Release ] && bin=build/bin/Release
+          out="bare-examples-${{ matrix.name }}"
+          mkdir -p "$out/assets"
+          for f in "$bin"/*; do
+            base=$(basename "$f")
+            case "$base" in test_*|*.pdb|*.ilk|*.exp|*.lib) continue ;; esac
+            [ -f "$f" ] || continue
+            cp "$f" "$out/"
+            if [ "$RUNNER_OS" != "Windows" ]; then strip "$out/$base"; fi
+          done
+          cp examples/assets/* "$out/assets/"
+          cp examples/code.c "$out/"   # something for the code example to open: ./code code.c
+          ls -la "$out"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "$out.zip" "$out" >/dev/null
+          else
+            tar czf "$out.tar.gz" "$out"   # keeps the executable bits
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bare-examples-${{ matrix.name }}
+          path: bare-examples-${{ matrix.name }}.*
+
+  release:
+    needs: build
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          [ -n "$(ls dist)" ] || { echo "nothing built"; exit 1; }
+          tag="build-${{ github.run_number }}"
+          sha="${GITHUB_SHA::7}"
+          gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Examples, build ${{ github.run_number }} ($sha)" \
+            --notes "Every Bare example built from $sha on Windows (x64), Linux (x64) and macOS (Apple silicon). Unzip and run; on macOS, right-click > Open the first time (the binaries aren't signed). Systems missing from this list failed to build: see the workflow run."

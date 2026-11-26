@@ -117,7 +117,7 @@ static const unsigned char cubes_vert1_msl[3534] = {
 };
 static const BareShaderCode cubes_shader = {
     cubes_spirv, cubes_dxil, cubes_msl, 432, 2844, 311, 0, 0, 0, cubes_dxbc, 508,
-    { cubes_vert0_spirv, cubes_vert1_spirv }, { cubes_vert0_dxil, cubes_vert1_dxil }, { cubes_vert0_msl, cubes_vert1_msl }, { NULL, NULL },
+    { cubes_vert0_spirv, cubes_vert1_spirv }, { cubes_vert0_dxil, cubes_vert1_dxil }, { cubes_vert0_msl, cubes_vert1_msl }, { 0, 0 },
     { 3384, 3468 }, { 5208, 5208 }, { 3460, 3534 }, { 0, 0 }, 0, 1, 0
 };
 
