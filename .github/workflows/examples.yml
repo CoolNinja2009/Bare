@@ -50,7 +50,8 @@ jobs:
       - name: Configure
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            gen=(-G "Visual Studio 17 2022" -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)   # no VC++ redistributable needed
+            # CMake's default here is the newest Visual Studio on the runner (its version changes with the image)
+            gen=(-A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)   # static CRT: no VC++ redistributable needed
           else
             command -v ninja >/dev/null || brew install ninja
             gen=(-G Ninja -DCMAKE_BUILD_TYPE=Release)
