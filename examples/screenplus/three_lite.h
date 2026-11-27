@@ -532,8 +532,8 @@ static inline bool tl_load_glb(TlScene *s, const unsigned char *data, size_t siz
                 target->parent = me;
                 snprintf(target->name, sizeof target->name, "%.50s_%d", o->name, pi);
             }
-            int pc, pcomp, pct, pstr, nc = 0, ncomp, nct, nstr = 0, uc = 0, ucomp, uct, ustr = 0, ic = 0, icomp, ict, istr = 0;
-            bool pn, nn, un, in;
+            int pc, pcomp, pct, pstr, nc = 0, ncomp = 0, nct = 0, nstr = 0, uc = 0, ucomp = 0, uct = 0, ustr = 0, ic = 0, icomp = 0, ict = 0, istr = 0;
+            bool pn, nn = false, un = false, in = false;
             const unsigned char *P = tl_accessor(&g, tl_j_int(tl_j_get(attr, "POSITION"), -1), &pc, &pcomp, &pct, &pstr, &pn);
             const unsigned char *N = tl_j_get(attr, "NORMAL") ? tl_accessor(&g, tl_j_int(tl_j_get(attr, "NORMAL"), -1), &nc, &ncomp, &nct, &nstr, &nn) : NULL;
             const unsigned char *U = tl_j_get(attr, "TEXCOORD_0") ? tl_accessor(&g, tl_j_int(tl_j_get(attr, "TEXCOORD_0"), -1), &uc, &ucomp, &uct, &ustr, &un) : NULL;

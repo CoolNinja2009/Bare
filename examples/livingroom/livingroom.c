@@ -289,7 +289,7 @@ static void on_track(const char *json) {
     memset(artist.px, 0, (size_t)artist.w * artist.h * 4);
     if (!thumb || !*thumb || !strcmp(thumb, "null")) {
         float c[3] = { 225 / 255.f, 225 / 255.f, 225 / 255.f };
-        if (arial) canvas_text(&artist, title, arial, strlen(title) > 20 ? 27 : 54, 320, 25 + 180, c);
+        if (arial) canvas_text(&artist, title, arial, strlen(title) > 20 ? 27.f : 54.f, 320, 25 + 180, c);
         album[0] = album[1] = album[2] = 225;
         set_light_color(45 / 255.f, 45 / 255.f, 45 / 255.f);
         grad_set(45, 45, 45);

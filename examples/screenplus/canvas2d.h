@@ -195,7 +195,7 @@ static inline void c2d_text_max(C2d *c, BareFont font, float size, const char *t
 static inline void c2d_text_mask(C2d *c, BareFont font, float size, const char *text, float x, float y, int channel) {
     const C2dText *t = c2d__text(c, font, size, text);
     if (!t || !t->w) return;
-    C2dColor m = { channel == 0, channel == 1, channel == 2, channel == 3 };
+    C2dColor m = { (float)(channel == 0), (float)(channel == 1), (float)(channel == 2), (float)(channel == 3) };
     c2d__push(c, floorf(x + 0.5f) + t->ox, floorf(y + 0.5f) + t->oy, (float)t->w, (float)t->h, 7, 0, (float)t->x, (float)t->y, m);
 }
 static inline void c2d_text(C2d *c, BareFont font, float size, const char *text, float x, float y, int align,
