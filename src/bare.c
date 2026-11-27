@@ -1,11 +1,15 @@
 /* bare.c: the simple API (bare_window, bare_frame, bare_run, bare_quit) on top
  * of the core context and the backend chosen at build time (ARCHITECTURE §3). */
 #include "bare/bare_backend.h"
+#include "backend/record.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 void bare__pictures_stop(void);   /* picture.c */
+void bare__videos_stop(void);     /* video.c */
+void bare__sound_virtual(bool on); /* sound: plays follow the fixed clock, unheard */
 
 BarePlatform bare__sdl3_platform(void);
 BareRenderer bare__sdl3gpu_renderer(void);
@@ -21,6 +25,10 @@ static struct {
     float         zoom;               /* BareWindowOptions.zoom: logical pixels = the system's / zoom */
     double        start, time, prev_time;
     int           capture_frames;     /* BARE_CAPTURE: frames left before quitting */
+    const char   *record_path;        /* BARE_RECORD: the video being written */
+    int           record_fps;
+    long          record_frames;      /* frames left to record before quitting */
+    BareRecorder *recorder;           /* opened on the first frame, when its size is known */
     double        fixed_dt;           /* BARE_FIXED_DT: seconds per frame, whatever the clock says */
     const char   *script;             /* BARE_EVENTS: input to play, by frame (see play_script) */
     long          frames;             /* frames begun */
@@ -30,6 +38,8 @@ static struct {
     BareId        chosen_id;          /* a file dialog's answer, shown for one frame */
     char          chosen[4096];
     int           chosen_frames;
+    char          dropped[8][4096];   /* files dropped on the window, one handed out a frame */
+    int           drops, drop_shown;
     void        (*run_frame)(void *user);   /* bare_run's frame, drawn from move/resize loops too */
     void         *run_user;
     bool          in_live;
@@ -43,6 +53,48 @@ static void clip_set(void *user, const char *text) { (void)user; app.platform.cl
 static int drag_query(void *user, float x, float y) {
     (void)user;
     return app.ctx && bare_ctx_window_drag(app.ctx, (BareVec2){ x / app.zoom, y / app.zoom });
+}
+
+/* BARE_RECORD=out.mp4: the app runs on a fixed clock (BARE_RECORD_FPS frames
+ * a second, default 60) for BARE_RECORD_SECONDS (default 10), every frame is
+ * read back and encoded, then it quits. The clock is the video's, not the
+ * wall's, so the video is smooth however slowly frames are made, and the same
+ * on every run. Input is ignored, as with BARE_FIXED_DT; BARE_EVENTS still
+ * plays. */
+static void record_sink(void *user, const void *pixels, int width, int height, int pitch, bool bgra) {
+    (void)user;
+    if (!app.record_path) return;
+    if (!app.recorder) {
+        app.recorder = bare__record_open(app.record_path, width & ~1, height & ~1, app.record_fps);
+        if (!app.recorder) { app.record_path = NULL; return; }
+        fprintf(stderr, "bare: recording %ld frames (%dx%d, %d fps) to %s\n", app.record_frames,
+                width & ~1, height & ~1, app.record_fps, app.record_path);
+    }
+    if (!bare__record_frame(app.recorder, pixels, pitch, bgra)) app.quit = true;
+}
+
+static void record_start(void) {
+    const char *path = getenv("BARE_RECORD");
+    if (!path || !*path) return;
+    if (!app.renderer.read_frames) {
+        fprintf(stderr, "bare: BARE_RECORD: this renderer can't read frames back\n");
+        return;
+    }
+    const char *fps = getenv("BARE_RECORD_FPS"), *secs = getenv("BARE_RECORD_SECONDS");
+    app.record_fps = fps && atoi(fps) > 0 ? atoi(fps) : 60;
+    double seconds = secs && atof(secs) > 0 ? atof(secs) : 10.0;
+    app.record_frames = (long)ceil(seconds * app.record_fps);
+    app.record_path = path;
+    if (app.fixed_dt <= 0) app.fixed_dt = 1.0 / app.record_fps;
+    app.renderer.read_frames(app.renderer.self, record_sink, NULL);
+}
+
+static void record_stop(void) {
+    if (!app.recorder) return;
+    long frames = bare__record_close(app.recorder);
+    app.recorder = NULL;
+    fprintf(stderr, "bare: recorded %ld frames (%.2f s) to %s\n", frames, (double)frames / app.record_fps,
+            app.record_path ? app.record_path : "the video");
 }
 
 static bool window_open(int width, int height, const char *title, unsigned flags, uintptr_t parent) {
@@ -84,6 +136,8 @@ static bool window_open(int width, int height, const char *title, unsigned flags
     app.fixed_dt = fixed ? atof(fixed) : 0;
     if (app.fixed_dt < 0) app.fixed_dt = 0;
     app.script = getenv("BARE_EVENTS");
+    record_start();
+    bare__sound_virtual(app.fixed_dt > 0);
     app.open = true;
     app.dirty = true;
     return true;
@@ -162,6 +216,15 @@ static void apply(const BareEvent *event) {
         app.dirty = true;
         return;
     }
+    case BARE_EVENT_FILE_DROPPED: {
+        const char *p = e->as.file.path ? e->as.file.path : "";
+        size_t n = strlen(p);
+        if (!n || n >= sizeof app.dropped[0] || app.drops >= 8) return;
+        memcpy(app.dropped[app.drops], p, n + 1);
+        app.drops++;
+        app.dirty = true;
+        return;
+    }
     case BARE_EVENT_RESIZE:
         app.width = e->as.size.w / app.zoom;
         app.height = e->as.size.h / app.zoom;
@@ -196,12 +259,23 @@ static void end_frame(void) {
     app.in_frame = false;
     app.dirty = animating || app.continuous;
     if (app.chosen_frames > 0 && --app.chosen_frames == 0) app.chosen_id = 0;
+    if (app.drop_shown) {   /* the dropped file this frame saw is done; the next one waits for the next frame */
+        memmove(app.dropped[0], app.dropped[1], sizeof app.dropped[0] * (size_t)(app.drops - 1));
+        app.drops--;
+        app.drop_shown = 0;
+        if (app.drops) app.dirty = true;
+    }
     if (app.capture_frames > 0 && --app.capture_frames == 0) app.quit = true;
+    if (app.record_path) {
+        app.dirty = true;   /* every frame is drawn, animating or not */
+        if (--app.record_frames <= 0) app.quit = true;
+    }
 }
 
 /* BARE_EVENTS="2:move:640:360; 3:down:640:360; 4:up:640:360; 5:wheel:-100":
  * input played at the start of frame N (logical pixels; wheel in the DOM's
- * deltaY), so tests and captures can hover, click and scroll. */
+ * deltaY), so tests and captures can hover, click and scroll.
+ * "6:drop:C:/clips/a.mp4" drops a file on the window (the path runs to the ';'). */
 static void play_script(void) {
     for (const char *p = app.script; p && *p;) {
         while (*p == ' ' || *p == ';') p++;
@@ -209,6 +283,15 @@ static void play_script(void) {
         long frame = 0;
         float x = 0, y = 0;
         int used = 0;
+        if (sscanf(p, "%ld:%7[a-z]:%n", &frame, kind, &used) == 2 && !strcmp(kind, "drop") && used) {
+            const char *path = p + used, *end = strchr(path, ';');
+            size_t n = end ? (size_t)(end - path) : strlen(path);
+            p = path + n;
+            if (frame != app.frames + 1 || !n || n >= sizeof app.dropped[0] || app.drops >= 8) continue;
+            memcpy(app.dropped[app.drops], path, n);
+            app.dropped[app.drops++][n] = 0;
+            continue;
+        }
         if (sscanf(p, "%ld:%7[a-z]:%f%n", &frame, kind, &x, &used) < 2) break;
         p += used;
         if (*p == ':') { p++; sscanf(p, "%f%n", &y, &used); p += used; }
@@ -250,7 +333,7 @@ bool bare_frame(void) {
 
     /* Sleep until something happens unless a redraw is already needed. In
      * capture mode never block: there's no user to wake us. */
-    double wait = (app.dirty || app.capture_frames) ? 0.0 : -1.0;
+    double wait = (app.dirty || app.capture_frames || app.record_path) ? 0.0 : -1.0;
     double wake = bare_ctx_wake_time(app.ctx);   /* something timed, like a scrollbar fading out */
     if (wait < 0 && wake >= 0) {
         double now = app.platform.time(app.platform.self) - app.start;
@@ -272,6 +355,12 @@ bool bare_frame(void) {
 void bare_file_dialog(BareId id, BareFileDialog kind, const char *filters, const char *path) {
     if (!app.open || !app.platform.file_dialog) return;
     app.platform.file_dialog(app.platform.self, id, (int)kind, filters, path);
+}
+
+const char *bare_file_dropped(void) {
+    if (!app.open || !app.in_frame || !app.drops) return NULL;
+    app.drop_shown = 1;
+    return app.dropped[0];
 }
 
 const char *bare_file_chosen(BareId id) {
@@ -314,6 +403,8 @@ void bare_quit(void) {
     if (!app.open) return;
     if (app.in_frame) bare_ctx_end(app.ctx, NULL);
     bare__pictures_stop();
+    bare__videos_stop();
+    record_stop();
     bare_ctx_destroy(app.ctx);
     app.renderer.shutdown(app.renderer.self);
     app.platform.close_window(app.platform.self);

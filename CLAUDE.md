@@ -64,6 +64,8 @@ include/bare.h            public API (most apps include only this)
 include/bare/             advanced headers: bare_core.h (headless ctx, draw list), bare_backend.h (interfaces)
 src/core/                 the core; no platform headers (see ARCHITECTURE §2 for the file list)
 src/bare.c                simple API on top of the core + the build-time backend
+src/picture.c, video.c    background loaders (bare_picture, bare_video_load); thread.h has their lock/thread helpers
+src/backend/              media_win32.c (system decoders), record_win32.c (BARE_RECORD encoder), backdrop_win32.c
 src/backend/sdl3/         SDL3 platform + SDL3 GPU renderer
 src/backend/sokol/        (M9)
 shaders/                  bare.glsl (boxes, glyphs, images), glass.glsl (liquid glass); generated/ = compiled blobs
@@ -114,7 +116,9 @@ ctest --test-dir build --output-on-failure
 Executables land in `build\bin\` (MSVC: `build-msvc\bin\Debug\`). The first configure downloads SDL 3.4.20 (~2 min).
 
 **Checking rendering by eye:** `BARE_CAPTURE=C:\path\out.bmp` (+ `BARE_CAPTURE_FRAMES=N`) saves frame N and quits;
-convert with PIL and look at it. `SDL_GPU_DRIVER=direct3d12|vulkan` forces a GPU driver (both must match pixel for
+convert with PIL and look at it. **Video:** `BARE_RECORD=C:\path\out.mp4` (+ `BARE_RECORD_SECONDS`, default 10;
+`BARE_RECORD_FPS`, default 60) records every frame on a fixed clock to H.264 and quits (Windows; faster than real time
+for light UIs); pull frames back out with `J:\msys\mingw64\bin\ffmpeg.exe` to check motion. `SDL_GPU_DRIVER=direct3d12|vulkan` forces a GPU driver (both must match pixel for
 pixel). `BARE_GPU_DEBUG=1` enables the GPU validation layer.
 
 MSVC (no developer prompt needed with the VS generator):
@@ -185,6 +189,27 @@ Then a lens shade in `final.glsl` with Cinema on (light falls off around a point
 side and bottom go dark, as measured off the clip), and whitecaps gathered into wave groups (non-repeating noise moving
 at the group speed, the long waves' crests and gusts) instead of repeating with the 53 m and 7.3 m tiles; the
 displacement maps are mipmapped and far foam shows as its coverage, not a threshold.
+
+**2026-11-25 (latest):** media for apps. `bare_sound_load` (Media Foundation: any audio, or a video's soundtrack, to
+float samples; WAV via SDL elsewhere), `bare_sound_play_at` / `bare_sound_stop` / `bare_sound_position` /
+`bare_sound_length` / `bare_sound_samples` (voices now stream from the samples by SDL's get callback and know their
+position; on a fixed clock plays are virtual, following `bare_time`, so recordings stay in sync).
+`bare_video_load` / `bare_video_pixels` / `bare_video_info` / `bare_video_free` (`src/video.c`: a thread a video,
+`bare__media_reader_*` in `media_win32.c`, a ring of frames just ahead of the asked time, seeks on jumps).
+`bare_file_dropped()` (SDL drop events; `BARE_EVENTS` gained `N:drop:path`). `src/thread.h` (shared by picture.c and
+video.c). `tests/test_media.c` (WAV and MP4 written then decoded, read in order, seeked). `examples/ascii.c`: drop a
+video or song; Picture view (frame to characters, auto levels, white / green / amber / true colour) and Sound view
+(2048-point FFT, log bands, mirrored spectrum); checked by scripted drops + `BARE_RECORD`, real time on SDL's dummy
+audio driver, GCC and MSVC. Not verified: audio heard through speakers, a real drag from Explorer, long films (memory
+of a decoded soundtrack is ~23 MB a minute), non-Windows (video fails, sound reads WAV only). Cost: ~5 ms of CPU a
+frame for ~12k characters of text (Bare's text layout), ~3.5 ms more with video decoding.
+
+**2026-11-25 (later):** `BARE_RECORD` (any Bare app to an MP4: `BareRenderer.read_frames` hands each presented frame
+to a `BareFrameSink`; `src/backend/record_win32.c` encodes H.264 with Media Foundation's sink writer; `tests/test_record.c`).
+`examples/voice.c`: a voice-input card shown two ways (A: ASCII hill, B: glowing dot grid; particles fly from the hill
+into each word, which condenses out of a blur; listening → thinking → done, a 14 s loop; `--at T` holds the clock), all
+plain boxes and text, ~1000 elements a frame. Recorded to `examples/voice.mp4` (840 frames in 5.6 s). Not done: macOS /
+Linux encoders, audio; the voice example's button only restarts the script (no microphone).
 
 **2026-11-25:** frameless windows (`bare_window_with`, `.window_drag`, `bare_window_minimize/maximize/close`) and
 `bare_window_backdrop()` (Windows: the live desktop behind the window by DXGI Desktop Duplication on a worker thread,
@@ -356,3 +381,6 @@ Ordered by impact on the "beats the browser" claim. Numbers from `bench/` on the
    pass draw straight into a box's area of the frame.
 7. **Canvas API gaps found by the port:** updating an image's pixels in place (video and GIF previews for
    ScreenPlus), reading a canvas back, compute shaders, passes into a sub-rectangle.
+8. **Text layout per frame:** `examples/ascii.c` spends ~5 ms of CPU a frame laying out ~12k monospace characters
+   (70 rows of spans). Profile `bare__text_runs` / emit; cache a paragraph's layout when its text and spans are
+   unchanged; a fast path for monospace (no kerning, fixed advance).

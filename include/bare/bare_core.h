@@ -202,7 +202,8 @@ typedef enum BareEventKind {
     BARE_EVENT_QUIT,
     BARE_EVENT_TEXT,           /* typed text (UTF-8), after the layout, dead keys and IME did their work */
     BARE_EVENT_COMPOSITION,    /* the IME's text being composed (empty: composition over); replaces the last one */
-    BARE_EVENT_FILE_CHOSEN     /* a file dialog's answer (BarePlatform.file_dialog) */
+    BARE_EVENT_FILE_CHOSEN,    /* a file dialog's answer (BarePlatform.file_dialog) */
+    BARE_EVENT_FILE_DROPPED    /* a file dropped on the window: as.file.path (request 0) */
 } BareEventKind;
 
 enum { BARE_MOUSE_LEFT = 1, BARE_MOUSE_MIDDLE = 2, BARE_MOUSE_RIGHT = 3 };

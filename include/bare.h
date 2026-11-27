@@ -314,6 +314,17 @@ BareImage bare_image_from_memory(const void *data, int size);     /* a file's by
 unsigned char *bare_image_decode(const void *data, int size, int *width, int *height);
 unsigned char *bare_text_pixels(const char *text, BareFont font, float size, int *width, int *height, int *x, int *y,
                                 float *advance);
+void      bare_image_free(BareImage image);                       /* images and canvases */
+BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
+/* New pixels for an image made by bare_image_from_pixels or bare_image_load,
+ * same size (video frames, live previews): no new image, no new id. False if
+ * the image isn't one of those. */
+bool      bare_image_update(BareImage image, const void *rgba8);
+/* An image of `frames` pictures of width x height, stacked top to bottom in
+ * rgba8, kept on the GPU; it shows one at a time, picked by bare_image_frame
+ * (no upload, no copy in memory). bare_image_size is one frame's. */
+BareImage bare_image_frames(int width, int height, int frames, const void *rgba8);
+
 /* Pixels as a WebGL texture, for 3D scenes and shaders: .mipmaps gives it a
  * full mip chain, remade after every bare_image_update, sampled trilinearly
  * (generateMipmap with LINEAR_MIPMAP_LINEAR); .srgb stores it as SRGB8_ALPHA8,
@@ -328,16 +339,6 @@ typedef struct BareTexture {
 } BareTexture;
 BareImage bare_texture_(const BareTexture *texture);
 #define bare_texture(...) bare_texture_(&(BareTexture){ __VA_ARGS__ })
-void      bare_image_free(BareImage image);                       /* images and canvases */
-BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
-/* New pixels for an image made by bare_image_from_pixels or bare_image_load,
- * same size (video frames, live previews): no new image, no new id. False if
- * the image isn't one of those. */
-bool      bare_image_update(BareImage image, const void *rgba8);
-/* An image of `frames` pictures of width x height, stacked top to bottom in
- * rgba8, kept on the GPU; it shows one at a time, picked by bare_image_frame
- * (no upload, no copy in memory). bare_image_size is one frame's. */
-BareImage bare_image_frames(int width, int height, int frames, const void *rgba8);
 void      bare_image_frame(BareImage image, int frame);
 
 /* A picture file, loaded in the background and kept while you draw it: call it
@@ -1028,6 +1029,10 @@ BareVec2 bare_window_size(void);
 typedef enum BareFileDialog { BARE_FILE_OPEN, BARE_FILE_SAVE, BARE_FILE_FOLDER } BareFileDialog;
 void        bare_file_dialog(BareId id, BareFileDialog kind, const char *filters, const char *path);
 const char *bare_file_chosen(BareId id);
+/* A file dragged from the desktop and dropped on the window: its path, for
+ * the frame after the drop (NULL otherwise). Several at once arrive a frame
+ * apart. */
+const char *bare_file_dropped(void);
 float bare_pixel_scale(void);          /* physical pixels per logical pixel (devicePixelRatio) */
 void  bare_continuous(bool on);         /* redraw every frame even when idle (games, video) */
 void  bare_wake(void);                  /* thread-safe: ask for a frame (e.g. data arrived) */
@@ -1082,6 +1087,66 @@ typedef uint32_t BareSound;   /* 0 = none */
 BareSound bare_sound(const float *samples, int frames, int channels, int rate);
 void      bare_sound_play(BareSound sound, float volume);   /* volume 0..1 */
 void      bare_sound_free(BareSound sound);
+
+/* Music and soundtracks: a whole file's sound, decoded into memory (about 23 MB
+ * a minute of stereo at 48 kHz). Reads what the system can (Windows: MP3, AAC,
+ * WMA, FLAC, WAV, ... and the sound of a video: MP4, MKV, ...; elsewhere WAV).
+ * 0 if it can't. It blocks while it decodes (a second or so for a song).
+ *
+ *     BareSound song = bare_sound_load("song.mp3");
+ *     bare_sound_play_at(song, 1, 30);                // from 0:30
+ *     double at = bare_sound_position(song);          // seconds; keep pictures in step with this
+ *     bare_sound_stop(song);                          // a pause: play_at(position) resumes */
+BareSound bare_sound_load(const char *path);
+void      bare_sound_play_at(BareSound sound, float volume, double seconds);
+void      bare_sound_stop(BareSound sound);             /* every play of it */
+/* Seconds into its latest play that is still playing; -1 when it isn't playing. */
+double    bare_sound_position(BareSound sound);
+double    bare_sound_length(BareSound sound);           /* seconds */
+/* Its samples, 32-bit floats, interleaved when stereo: to draw a waveform or
+ * a spectrum. Valid until bare_sound_free; NULL for 0. */
+const float *bare_sound_samples(BareSound sound, int *frames, int *channels, int *rate);
+
+/* ------------------------------------------------------------------------ */
+/* Video frames for your own drawing                                        */
+/* ------------------------------------------------------------------------ */
+
+/* A video's pictures as pixels, for drawing your own way (ASCII art, effects,
+ * analysis): what a <video> drawn into a canvas and read back with
+ * getImageData is in a browser. Frames are decoded on a thread of its own, on
+ * the GPU when it can, shrunk to fit inside .width x .height (keeping the
+ * video's shape), and kept only a moment ahead of the time you ask for, so a
+ * film costs no more memory than a clip. Ask for any time, in any order:
+ * a jump seeks. Windows only so far (elsewhere it fails).
+ *
+ *     BareVideo v = bare_video_load("clip.mp4", .width = 160, .height = 90);
+ *     int w, h;
+ *     const unsigned char *rgba = bare_video_pixels(v, seconds, &w, &h);
+ *     if (rgba) { ... w * h pixels, 4 bytes each, rows top first ... }
+ *
+ * Pair it with bare_sound_load(same path) and use bare_sound_position as the
+ * clock to keep the pictures with the sound. */
+typedef uint32_t BareVideo;   /* 0 = none */
+typedef struct BareVideoOptions {
+    int width, height;          /* the most pixels a frame has across and down (0: 320 x 180) */
+} BareVideoOptions;
+BareVideo bare_video_load_(const char *path, BareVideoOptions options);
+#define bare_video_load(path, ...) bare_video_load_((path), (BareVideoOptions){ __VA_ARGS__ })
+
+/* The frame showing at `seconds`, RGBA; valid until the next call for this
+ * video. Until that frame is decoded (just after a jump), the last one
+ * returned; NULL before the first. */
+const unsigned char *bare_video_pixels(BareVideo video, double seconds, int *width, int *height);
+
+typedef struct BareVideoInfo {
+    bool ready;                 /* opened: the fields below are known */
+    bool failed;                /* not a video, or it can't be read */
+    double duration;            /* seconds (0 if the file doesn't say) */
+    int width, height;          /* the video's own size */
+    float fps;
+} BareVideoInfo;
+BareVideoInfo bare_video_info(BareVideo video);
+void          bare_video_free(BareVideo video);
 
 /* ------------------------------------------------------------------------ */
 /* Internals the macros above expand to. Not for direct use.                */

@@ -73,8 +73,25 @@ static SDL_HitTestResult hit_test(SDL_Window *win, const SDL_Point *p, void *dat
     return SDL_HITTEST_NORMAL;
 }
 
+#ifdef _WIN32
+/* A wallpaper (a WS_CHILD behind the desktop icons) gets its mouse posted by Screen+, never the real pointer, so the
+ * WM_MOUSELEAVE SDL's TrackMouseEvent asks for arrives at once and would drop the hover after every move (unless a
+ * button is held: SDL's capture ignores it). Only Screen+'s own leave, marked in lParam, gets through. */
+#define BARE_SP_LEAVE ((LPARAM)0x53502B4C)   /* 'SP+L': Screen+'s app_renderer.c posts it */
+static bool SDLCALL wallpaper_leave_hook(void *user, MSG *msg) {
+    (void)user;
+    if (msg->message == WM_MOUSELEAVE && msg->lParam != BARE_SP_LEAVE &&
+        (GetWindowLongW(msg->hwnd, GWL_STYLE) & WS_CHILD))
+        return false;
+    return true;
+}
+#endif
+
 static bool open_window(void *self, int width, int height, const char *title, unsigned options) {
     (void)self;
+#ifdef _WIN32
+    SDL_SetWindowsMessageHook(wallpaper_leave_hook, NULL);
+#endif
     /* Bare draws the IME's composition inline in the field; the OS still
      * shows the candidate list. */
     SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "composition");
@@ -305,6 +322,13 @@ static bool translate(const SDL_Event *e, BareEvent *out) {
         out->as.text.utf8 = keep_text(e->text.text, &out->as.text.len);
         out->as.text.cursor = out->as.text.len;
         return out->as.text.len > 0;
+    case SDL_EVENT_DROP_FILE: {
+        int len = 0;
+        out->kind = BARE_EVENT_FILE_DROPPED;
+        out->as.file.request = 0;
+        out->as.file.path = keep_text(e->drop.data, &len);
+        return len > 0;
+    }
     case SDL_EVENT_TEXT_EDITING: {
         out->kind = BARE_EVENT_COMPOSITION;
         const char *t = keep_text(e->edit.text, &out->as.text.len);

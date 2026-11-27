@@ -587,6 +587,39 @@ const char *path = bare_file_chosen(BARE_ID("open"));
 if (path && *path) open_file(path);
 ```
 
+Files dragged from the desktop onto the window arrive the same way, one a frame:
+
+```c
+const char *dropped = bare_file_dropped();
+if (dropped) open_file(dropped);
+```
+
+### Music, soundtracks and video frames
+
+`bare_sound_load` decodes a whole file's sound into memory: a song, or the soundtrack of a video (on Windows anything
+the system can play: MP3, AAC, FLAC, WAV, MP4, MKV ...; elsewhere WAV). Play it from anywhere, stop it, and ask where it
+is; that position is the clock to time everything else by:
+
+```c
+BareSound song = bare_sound_load(path);
+bare_sound_play_at(song, 1, 0);                 // volume, from 0:00
+double at = bare_sound_position(song);          // seconds; -1 once it's over
+const float *s = bare_sound_samples(song, &frames, &channels, &rate);   // for a waveform or a spectrum
+```
+
+`bare_video_load` gives a video's pictures as pixels, for drawing your own way (what a `<video>` drawn into a canvas
+and read with `getImageData` is in a browser). Frames are decoded on a thread of their own, shrunk to fit the size you
+ask for, and kept just ahead of the time you ask for, so a film costs no more memory than a clip:
+
+```c
+BareVideo v = bare_video_load(path, .width = 320, .height = 180);
+int w, h;
+const unsigned char *rgba = bare_video_pixels(v, bare_sound_position(song), &w, &h);   // NULL until the first frame
+```
+
+`examples/ascii.c` puts these together: drop a video or a song on it and it plays as ASCII art, the picture in
+characters and the sound as a spectrum. Video and sound files are read on Windows so far.
+
 ## 11. Movement
 
 Set the new value and say how to get there; Bare animates to it:
@@ -904,6 +937,9 @@ bare_draw(.target = scene, .depth = depth, .depth_read_only = true, .blend = BAR
 | `<b>`, `<i>`, `<span>`, `font-weight`, `text-shadow` | `bare_paragraph` + `bare_span`, `.weight`, `.italic`, `.shadow` |
 | CodeMirror / Monaco | `bare_editor(doc, ...)` on a `BareDoc` |
 | `<input type=file>` | `bare_file_dialog` + `bare_file_chosen` |
+| dropping files on the page | `bare_file_dropped()` |
+| `<audio>`, `currentTime` | `bare_sound_load`, `bare_sound_play_at`, `bare_sound_position` |
+| `<video>` into a canvas + `getImageData` | `bare_video_load` + `bare_video_pixels` |
 
 ## 15. Debugging
 
@@ -914,6 +950,16 @@ bare_draw(.target = scene, .depth = depth, .depth_read_only = true, .blend = BAR
 
   ```powershell
   $env:BARE_CAPTURE = "C:\temp\shot.bmp"; .\build\myapp.exe; Remove-Item Env:BARE_CAPTURE
+  ```
+
+- **Record a video:** set `BARE_RECORD` to an .mp4 path and the app records itself and quits: H.264, every frame,
+  on a fixed clock, so the video is smooth even when frames are slow to make (Windows for now).
+  `BARE_RECORD_SECONDS` (default 10) and `BARE_RECORD_FPS` (default 60) set the length and rate. Mouse and keys
+  are ignored while recording; `BARE_EVENTS` can script them.
+
+  ```powershell
+  $env:BARE_RECORD = "C:\temp\demo.mp4"; $env:BARE_RECORD_SECONDS = 14; .\build\bin\voice.exe
+  Remove-Item Env:BARE_RECORD, Env:BARE_RECORD_SECONDS
   ```
 
 - `SDL_GPU_DRIVER=vulkan` or `direct3d12` picks the GPU API (both draw the same pixels); `BARE_GPU_DEBUG=1` turns on

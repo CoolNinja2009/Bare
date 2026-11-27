@@ -16,6 +16,7 @@
 #endif
 #include "bare.h"
 #include "backend/media.h"
+#include "thread.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -70,40 +71,7 @@
 #define IDLE_S       30              /* a decoding thread with nothing to do this long lets its GPU device go */
 #define MAX_STRIP    16384           /* a moving picture's frames, stacked, up to this tall live on the GPU */
 
-/* ---- threads --------------------------------------------------------------- */
-
-#ifdef _WIN32
-typedef SRWLOCK Lock;
-typedef CONDITION_VARIABLE Cond;
-typedef HANDLE Thread;
-static void lock_init(Lock *l) { InitializeSRWLock(l); }
-static void lock(Lock *l) { AcquireSRWLockExclusive(l); }
-static void unlock(Lock *l) { ReleaseSRWLockExclusive(l); }
-static void cond_init(Cond *c) { InitializeConditionVariable(c); }
-static void cond_wait(Cond *c, Lock *l) { SleepConditionVariableSRW(c, l, INFINITE, 0); }
-static void cond_wait_ms(Cond *c, Lock *l, int ms) { SleepConditionVariableSRW(c, l, (DWORD)ms, 0); }
-static void cond_one(Cond *c) { WakeConditionVariable(c); }
-static void cond_all(Cond *c) { WakeAllConditionVariable(c); }
-#else
-typedef pthread_mutex_t Lock;
-typedef pthread_cond_t Cond;
-typedef pthread_t Thread;
-static void lock_init(Lock *l) { pthread_mutex_init(l, NULL); }
-static void lock(Lock *l) { pthread_mutex_lock(l); }
-static void unlock(Lock *l) { pthread_mutex_unlock(l); }
-static void cond_init(Cond *c) { pthread_cond_init(c, NULL); }
-static void cond_wait(Cond *c, Lock *l) { pthread_cond_wait(c, l); }
-static void cond_wait_ms(Cond *c, Lock *l, int ms) {
-    struct timespec t;
-    clock_gettime(CLOCK_REALTIME, &t);
-    t.tv_sec += ms / 1000;
-    t.tv_nsec += (long)(ms % 1000) * 1000000L;
-    if (t.tv_nsec >= 1000000000L) t.tv_sec++, t.tv_nsec -= 1000000000L;
-    pthread_cond_timedwait(c, l, &t);
-}
-static void cond_one(Cond *c) { pthread_cond_signal(c); }
-static void cond_all(Cond *c) { pthread_cond_broadcast(c); }
-#endif
+/* ---- threads: src/thread.h ------------------------------------------------- */
 
 typedef struct Job {
     char *path;

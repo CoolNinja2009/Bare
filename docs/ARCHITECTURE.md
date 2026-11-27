@@ -690,5 +690,24 @@ headless tests too). `bare.c` owns the app state and the backend pair.
 
 **Capture.** With `BARE_CAPTURE=out.bmp` (and optionally `BARE_CAPTURE_FRAMES=N`, default 2) the SDL3 backend never
 sleeps, saves frame N to the file and quits. It is how rendering is checked without screenshots, and the basis of the
-cross-backend comparison in M9. Multi-window support later
+cross-backend comparison in M9.
+
+**Media.** `src/backend/media_win32.c` holds the system's decoders (Media Foundation, WIC, the shell's thumbnail
+cache): `bare_picture` (`src/picture.c`), `bare_sound_load` (a whole file's sound to float samples) and
+`bare_video_load` (`src/video.c`: one thread per video reading a frame at a time, shrinking each to the size asked
+for, keeping a ring of a few frames just ahead of the time the app last asked for; a jump back or far ahead seeks).
+Sounds play through `src/backend/sdl3/sound_sdl3.c`: each voice is fed from the sound's samples by SDL's get callback
+(no second copy) and knows its position; on a fixed clock (`BARE_FIXED_DT`, `BARE_RECORD`) plays are kept on that
+clock instead of being heard, so `bare_sound_position` follows `bare_time` and recordings stay in sync.
+`src/thread.h` has the lock, condition and thread helpers both loaders use.
+
+**Recording.** With `BARE_RECORD=out.mp4` `bare.c` runs the app on a fixed clock (`BARE_RECORD_FPS`, default 60:
+frame n is at n / fps seconds, whatever the wall clock says), never sleeps, asks the renderer for every frame
+(`BareRenderer.read_frames`: a `BareFrameSink` called with each presented frame's pixels) and quits after
+`BARE_RECORD_SECONDS` (default 10). The pixels go to `src/backend/record_win32.c`, which encodes H.264 into an MP4
+with Media Foundation's sink writer (it converts to YUV and uses the GPU's encoder when there is one). Because the
+clock is the video's, a slow frame never drops or stutters, and the same app records the same video every run.
+Other systems have no encoder yet (opening fails with a message).
+
+Multi-window support later
 (`bare_window_new`, `bare_use`) is one context per window, switched by `bare_use`.

@@ -127,7 +127,9 @@ if(BARE_BACKEND STREQUAL "SDL3")
         src/backend/sdl3/sound_sdl3.c
         src/backend/dxbc.c
         src/backend/media_win32.c
+        src/backend/record_win32.c
         src/picture.c
+        src/video.c
     )
     target_include_directories(bare PRIVATE src shaders/generated)
     target_include_directories(bare SYSTEM PRIVATE ${stb_SOURCE_DIR})

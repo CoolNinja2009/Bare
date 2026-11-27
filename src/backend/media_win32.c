@@ -332,6 +332,204 @@ bool bare__media_video(const char *path, int frames, float fps, int want_w, int 
     free(wpath);
     return got > 0;
 }
+/* ---- sound ------------------------------------------------------------------- */
+
+static bool grow(float **data, size_t *cap, size_t need) {
+    if (need <= *cap) return true;
+    size_t ncap = *cap ? *cap * 2 : 1u << 20;
+    while (ncap < need) ncap *= 2;
+    float *g = realloc(*data, ncap * sizeof *g);
+    if (!g) return false;
+    *data = g, *cap = ncap;
+    return true;
+}
+
+bool bare__media_audio(const char *path, float **samples, int *frames, int *channels, int *rate) {
+    *samples = NULL, *frames = 0, *channels = 0, *rate = 0;
+    if (!mf_ready) return false;
+    wchar_t *wpath = widen(path);
+    if (!wpath) return false;
+    IMFSourceReader *r = NULL;
+    IMFMediaType *native = NULL, *want = NULL, *got = NULL;
+    float *data = NULL;
+    size_t len = 0, cap = 0;
+    UINT32 ch = 0, hz = 0, nch = 0;
+    int out_ch = 0;
+    bool ok = false;
+    const DWORD audio = (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM;
+    if (SUCCEEDED(MFCreateSourceReaderFromURL(wpath, NULL, &r)) &&
+        SUCCEEDED(IMFSourceReader_SetStreamSelection(r, (DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE)) &&
+        SUCCEEDED(IMFSourceReader_SetStreamSelection(r, audio, TRUE)) &&
+        SUCCEEDED(IMFSourceReader_GetNativeMediaType(r, audio, 0, &native)) &&
+        SUCCEEDED(MFCreateMediaType(&want)) &&
+        SUCCEEDED(IMFMediaType_SetGUID(want, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio)) &&
+        SUCCEEDED(IMFMediaType_SetGUID(want, &MF_MT_SUBTYPE, &MFAudioFormat_Float))) {
+        /* Surround to stereo where the reader can; otherwise it's mixed down below. */
+        if (SUCCEEDED(IMFMediaType_GetUINT32(native, &MF_MT_AUDIO_NUM_CHANNELS, &nch)) && nch > 2)
+            IMFMediaType_SetUINT32(want, &MF_MT_AUDIO_NUM_CHANNELS, 2);
+        HRESULT hr = IMFSourceReader_SetCurrentMediaType(r, audio, NULL, want);
+        if (FAILED(hr) && nch > 2) {
+            IMFMediaType_DeleteItem(want, &MF_MT_AUDIO_NUM_CHANNELS);
+            hr = IMFSourceReader_SetCurrentMediaType(r, audio, NULL, want);
+        }
+        if (SUCCEEDED(hr) && SUCCEEDED(IMFSourceReader_GetCurrentMediaType(r, audio, &got)) &&
+            SUCCEEDED(IMFMediaType_GetUINT32(got, &MF_MT_AUDIO_NUM_CHANNELS, &ch)) &&
+            SUCCEEDED(IMFMediaType_GetUINT32(got, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &hz)) && ch > 0 && hz > 0) {
+            ok = true;
+            out_ch = ch > 1 ? 2 : 1;
+            for (;;) {
+                DWORD flags = 0;
+                IMFSample *sample = NULL;
+                if (FAILED(IMFSourceReader_ReadSample(r, audio, 0, NULL, &flags, NULL, &sample))) break;
+                IMFMediaBuffer *buf = NULL;
+                BYTE *p = NULL;
+                DWORD bytes = 0;
+                if (sample && SUCCEEDED(IMFSample_ConvertToContiguousBuffer(sample, &buf)) &&
+                    SUCCEEDED(IMFMediaBuffer_Lock(buf, &p, NULL, &bytes))) {
+                    size_t n = bytes / (sizeof(float) * ch);   /* frames in this sample */
+                    if (!grow(&data, &cap, len + n * (size_t)out_ch)) ok = false;
+                    const float *in = (const float *)p;
+                    for (size_t f = 0; ok && f < n; f++, in += ch) {
+                        if (ch <= 2) {
+                            for (int c = 0; c < out_ch; c++) data[len++] = in[c];
+                        } else {   /* the reader wouldn't mix it: odd channels left, even right */
+                            float lr[2] = { 0, 0 };
+                            for (UINT32 c = 0; c < ch; c++) lr[c & 1] += in[c];
+                            data[len++] = lr[0] * 2.0f / (float)ch;
+                            data[len++] = lr[1] * 2.0f / (float)ch;
+                        }
+                    }
+                    IMFMediaBuffer_Unlock(buf);
+                }
+                release((IUnknown *)buf);
+                release((IUnknown *)sample);
+                if (!ok || (flags & (MF_SOURCE_READERF_ENDOFSTREAM | MF_SOURCE_READERF_ERROR))) break;
+            }
+        }
+    }
+    release((IUnknown *)got);
+    release((IUnknown *)want);
+    release((IUnknown *)native);
+    release((IUnknown *)r);
+    free(wpath);
+    if (!ok || !len) { free(data); return false; }
+    *samples = data, *frames = (int)(len / (size_t)out_ch), *channels = out_ch, *rate = (int)hz;
+    return true;
+}
+
+/* ---- video, a frame at a time ------------------------------------------------ */
+
+struct BareMediaReader {
+    IMFSourceReader *r;
+    int x, y, w, h, rows;
+    LONG stride;
+    double duration;
+    float fps;
+};
+
+BareMediaReader *bare__media_reader_open(const char *path, bool use_gpu, int want_w, int want_h) {
+    if (!mf_ready) return NULL;
+    IMFDXGIDeviceManager *mgr = use_gpu ? gpu() : NULL;
+    if (use_gpu && !mgr) return NULL;
+    wchar_t *wpath = widen(path);
+    if (!wpath) return NULL;
+    IMFSourceReader *r = open_reader(wpath, mgr, use_gpu ? want_w : 0, use_gpu ? want_h : 0);
+    free(wpath);
+    if (!r) return NULL;
+    BareMediaReader *m = calloc(1, sizeof *m);
+    if (!m || !frame_size(r, &m->x, &m->y, &m->w, &m->h, &m->rows, &m->stride)) {
+        free(m);
+        release((IUnknown *)r);
+        return NULL;
+    }
+    m->r = r;
+    PROPVARIANT dur;
+    PropVariantInit(&dur);
+    if (SUCCEEDED(IMFSourceReader_GetPresentationAttribute(r, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_PD_DURATION,
+                                                           &dur)) && dur.vt == VT_UI8)
+        m->duration = (double)dur.uhVal.QuadPart / 1e7;
+    PropVariantClear(&dur);
+    IMFMediaType *t = NULL;
+    UINT64 rate = 0;
+    if (SUCCEEDED(IMFSourceReader_GetNativeMediaType(r, (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &t)) &&
+        SUCCEEDED(IMFMediaType_GetUINT64(t, &MF_MT_FRAME_RATE, &rate)) && (rate & 0xffffffffu))
+        m->fps = (float)((double)(rate >> 32) / (double)(rate & 0xffffffffu));
+    release((IUnknown *)t);
+    return m;
+}
+
+void bare__media_reader_info(BareMediaReader *m, double *duration, int *width, int *height, float *fps) {
+    if (duration) *duration = m ? m->duration : 0;
+    if (width) *width = m ? m->w : 0;
+    if (height) *height = m ? m->h : 0;
+    if (fps) *fps = m ? m->fps : 0;
+}
+
+bool bare__media_reader_seek(BareMediaReader *m, double seconds) {
+    if (!m) return false;
+    PROPVARIANT at;
+    PropVariantInit(&at);
+    at.vt = VT_I8;
+    at.hVal.QuadPart = (LONGLONG)((seconds > 0 ? seconds : 0) * 1e7);
+    return SUCCEEDED(IMFSourceReader_SetCurrentPosition(m->r, &GUID_NULL, &at));
+}
+
+int bare__media_reader_next(BareMediaReader *m, BareMediaFrame frame, void *user, double *time) {
+    if (!m) return -1;
+    for (int tries = 0; tries < 64; tries++) {
+        DWORD flags = 0;
+        LONGLONG ts = 0;
+        IMFSample *sample = NULL;
+        if (FAILED(IMFSourceReader_ReadSample(m->r, (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, &flags, &ts,
+                                              &sample)))
+            return -1;
+        if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
+            frame_size(m->r, &m->x, &m->y, &m->w, &m->h, &m->rows, &m->stride);
+        if (!sample) {
+            if (flags & MF_SOURCE_READERF_ERROR) return -1;
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) return 0;
+            continue;
+        }
+        int given = -1;
+        IMFMediaBuffer *buf = NULL;
+        if (SUCCEEDED(IMFSample_ConvertToContiguousBuffer(sample, &buf))) {
+            IMF2DBuffer *b2 = NULL;
+            BYTE *scan = NULL;
+            LONG pitch = 0;
+            bool locked = false;
+            if (SUCCEEDED(IMFMediaBuffer_QueryInterface(buf, &IID_IMF2DBuffer, (void **)&b2)) &&
+                SUCCEEDED(IMF2DBuffer_Lock2D(b2, &scan, &pitch))) {
+                locked = true;
+            } else {
+                DWORD len = 0;
+                if (SUCCEEDED(IMFMediaBuffer_Lock(buf, &scan, NULL, &len))) {
+                    pitch = m->stride ? m->stride : m->w * 4;
+                    if (pitch < 0) scan += (size_t)(-pitch) * (size_t)(m->rows - 1);   /* bottom-up: the top row */
+                    if ((DWORD)labs(pitch) * (DWORD)m->rows > len) { IMFMediaBuffer_Unlock(buf); scan = NULL; }
+                }
+            }
+            if (scan) {
+                if (time) *time = (double)ts / 1e7;
+                frame(user, scan + (ptrdiff_t)pitch * m->y + (ptrdiff_t)m->x * 4, m->w, m->h, (int)pitch, true, 0);
+                given = 1;
+            }
+            if (locked) IMF2DBuffer_Unlock2D(b2);
+            else if (scan) IMFMediaBuffer_Unlock(buf);
+            release((IUnknown *)b2);
+            release((IUnknown *)buf);
+        }
+        release((IUnknown *)sample);
+        return given;
+    }
+    return -1;
+}
+
+void bare__media_reader_close(BareMediaReader *m) {
+    if (!m) return;
+    release((IUnknown *)m->r);
+    free(m);
+}
+
 #else
 #include "media.h"
 void bare__media_thread_begin(void) {}
@@ -350,4 +548,26 @@ bool bare__media_video(const char *path, int frames, float fps, int want_w, int 
     (void)path, (void)frames, (void)fps, (void)want_w, (void)want_h, (void)frame, (void)user;
     return false;
 }
+bool bare__media_audio(const char *path, float **samples, int *frames, int *channels, int *rate) {
+    (void)path;
+    *samples = NULL, *frames = *channels = *rate = 0;
+    return false;
+}
+BareMediaReader *bare__media_reader_open(const char *path, bool gpu, int want_w, int want_h) {
+    (void)path, (void)gpu, (void)want_w, (void)want_h;
+    return NULL;
+}
+void bare__media_reader_info(BareMediaReader *r, double *duration, int *width, int *height, float *fps) {
+    (void)r;
+    if (duration) *duration = 0;
+    if (width) *width = 0;
+    if (height) *height = 0;
+    if (fps) *fps = 0;
+}
+bool bare__media_reader_seek(BareMediaReader *r, double seconds) { (void)r, (void)seconds; return false; }
+int  bare__media_reader_next(BareMediaReader *r, BareMediaFrame frame, void *user, double *time) {
+    (void)r, (void)frame, (void)user, (void)time;
+    return -1;
+}
+void bare__media_reader_close(BareMediaReader *r) { (void)r; }
 #endif

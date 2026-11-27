@@ -109,6 +109,8 @@ typedef struct GpuRenderer {
     const char              *capture_path;
     SDL_GPUTransferBuffer   *capture_xfer;
     Uint32                   capture_cap;
+    BareFrameSink            sink;               /* read_frames: every frame goes here too */
+    void                    *sink_user;
 } GpuRenderer;
 
 static GpuRenderer gpu;
@@ -686,14 +688,23 @@ static SDL_GPURenderPass *begin_scene_pass(SDL_GPUCommandBuffer *cmd, bool clear
 static void save_capture(Uint32 w, Uint32 h) {
     void *pixels = SDL_MapGPUTransferBuffer(gpu.device, gpu.capture_xfer, false);
     if (!pixels) return;
-    SDL_PixelFormat pf = gpu.format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM ? SDL_PIXELFORMAT_BGRA32
-                                                                            : SDL_PIXELFORMAT_RGBA32;
-    SDL_Surface *s = SDL_CreateSurfaceFrom((int)w, (int)h, pf, pixels, (int)w * 4);
-    if (s) {
-        if (!SDL_SaveBMP(s, gpu.capture_path)) SDL_Log("bare: capture failed: %s", SDL_GetError());
-        SDL_DestroySurface(s);
+    bool bgra = gpu.format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
+    if (gpu.capture_path) {
+        SDL_Surface *s = SDL_CreateSurfaceFrom((int)w, (int)h, bgra ? SDL_PIXELFORMAT_BGRA32 : SDL_PIXELFORMAT_RGBA32,
+                                               pixels, (int)w * 4);
+        if (s) {
+            if (!SDL_SaveBMP(s, gpu.capture_path)) SDL_Log("bare: capture failed: %s", SDL_GetError());
+            SDL_DestroySurface(s);
+        }
     }
+    if (gpu.sink) gpu.sink(gpu.sink_user, pixels, (int)w, (int)h, (int)w * 4, bgra);
     SDL_UnmapGPUTransferBuffer(gpu.device, gpu.capture_xfer);
+}
+
+static void read_frames(void *self, BareFrameSink sink, void *user) {
+    (void)self;
+    gpu.sink = sink;
+    gpu.sink_user = user;
 }
 
 /* ---- images, canvases, shaders and passes -------------------------------- */
@@ -1237,7 +1248,7 @@ static void render(void *self, const BareDrawList *list) {
     SDL_EndGPURenderPass(pass);
     blit(cmd, gpu.scene, swap, sw, sh);
 
-    if (gpu.capture_path && ensure_xfer(&gpu.capture_xfer, &gpu.capture_cap, sw * sh * 4,
+    if ((gpu.capture_path || gpu.sink) && ensure_xfer(&gpu.capture_xfer, &gpu.capture_cap, sw * sh * 4,
                                         SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD)) {
         SDL_GPUCopyPass *dl = SDL_BeginGPUCopyPass(cmd);
         SDL_GPUTextureRegion src = { .texture = gpu.scene, .w = sw, .h = sh, .d = 1 };
@@ -1256,6 +1267,7 @@ static void render(void *self, const BareDrawList *list) {
 }
 
 BareRenderer bare__sdl3gpu_renderer(void) {
-    BareRenderer r = { .self = &gpu, .init = init, .render = render, .shutdown = shutdown_renderer };
+    BareRenderer r = { .self = &gpu, .init = init, .render = render, .shutdown = shutdown_renderer,
+                       .read_frames = read_frames };
     return r;
 }

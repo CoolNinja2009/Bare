@@ -73,11 +73,19 @@ typedef struct BarePlatform {
     void   (*run)(void *self, void (*frame)(void *ctx), void *ctx);
 } BarePlatform;
 
+/* A frame as presented: rows top first, `pitch` bytes apart, 8-bit BGRA or
+ * RGBA (alpha meaningless), physical pixels. Valid only during the call. */
+typedef void (*BareFrameSink)(void *user, const void *pixels, int width, int height, int pitch, bool bgra);
+
 typedef struct BareRenderer {
     void *self;
     bool (*init)(void *self, const BarePlatform *platform);
     void (*render)(void *self, const BareDrawList *list);    /* uploads, draw, present */
     void (*shutdown)(void *self);
+    /* From the next render on, read every frame back and hand it to `sink`
+     * (NULL stops). Slow (waits for the GPU each frame): for recording video
+     * (BARE_RECORD), not for normal frames. NULL if the renderer can't. */
+    void (*read_frames)(void *self, BareFrameSink sink, void *user);
 } BareRenderer;
 
 #ifdef __cplusplus

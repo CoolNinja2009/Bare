@@ -40,6 +40,8 @@ Done 2026-11-23.
 - Renderer draws into an offscreen scene; before each glass command it copies the scene to a mipmapped backdrop;
   `shaders/glass.glsl` bends it through a circular rim, with dispersion, frost, rim light and a merged shadow.
 - `BARE_CAPTURE` / `BARE_CAPTURE_FRAMES` save a frame to .bmp for checking by eye.
+- `BARE_RECORD=out.mp4` (+ `BARE_RECORD_SECONDS`, `BARE_RECORD_FPS`) records any Bare app to an H.264 MP4 on a fixed
+  clock (Windows, Media Foundation; added 2026-11-25). Not yet: macOS / Linux encoders, audio.
 
 **Example:** `examples/glass.c`. **Tests:** stack, offset, glass defaults/zero/merge/frost (in `test_emit.c`).
 
@@ -467,7 +469,11 @@ needed; **beyond** = something the web can't do as easily.
 | CSS classes, variables, themes | `.style = &card` (chains), `bare_theme()`, `bare_set_theme` (animated) | done |
 | buttons, checkboxes, sliders, list items | `bare_button`, `bare_checkbox`, `bare_slider`, `bare_list_item` | done |
 | `<input type=file>`, `showOpenFilePicker` | `bare_file_dialog` (open, save, folder; doesn't block) | done |
-| drag and drop, touch | | later |
+| dropping files on the window | `bare_file_dropped()` | done |
+| `<audio>` (play, seek, `currentTime`), Web Audio's analyser | `bare_sound_load`, `bare_sound_play_at`, `bare_sound_stop`, `bare_sound_position`, `bare_sound_samples` | done (Windows decodes; elsewhere WAV) |
+| `<video>` drawn into a canvas, `getImageData` | `bare_video_load`, `bare_video_pixels` (frames on a thread, kept just ahead) | done (Windows) |
+| `<video>` as an element (shown on the GPU, controls) | | later |
+| drag and drop inside the app, touch | | later |
 | accessibility (screen readers) | platform a11y trees | later |
 | runs in a browser | sokol backend + Emscripten | M9 |
 | **Cost** | | |
