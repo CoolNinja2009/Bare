@@ -90,3 +90,103 @@ bare_add_shaders(water OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/water/generated/water_
     water/shaders/spray.glsl water/shaders/water.glsl water/shaders/dof.glsl water/shaders/motes.glsl
     water/shaders/detail.glsl water/shaders/down.glsl water/shaders/up.glsl
     water/shaders/final.glsl)
+
+# Matrix Rain: Screen+'s sample (falling katakana on a canvas never cleared); bare_draw and bare_text_pixels.
+add_executable(matrix matrix/matrix.c)
+target_link_libraries(matrix PRIVATE bare)
+target_compile_options(matrix PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(matrix OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/matrix/generated/matrix_shaders.h SOURCES
+    matrix/shaders/rain.glsl)
+
+# Music Tunnel: Screen+'s sample (rocksdanister's tunnel shader, blurred; album art while a song plays).
+add_executable(tunnel tunnel/tunnel.c)
+target_link_libraries(tunnel PRIVATE bare)
+target_compile_options(tunnel PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(tunnel PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tunnel/assets")
+bare_add_shaders(tunnel OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/tunnel/generated/tunnel_shaders.h SOURCES
+    tunnel/shaders/tunnel.glsl tunnel/shaders/blur.glsl)
+
+# Simple System: Screen+'s sample (rocksdanister's Chart.js system monitor; the card repainted as an RTX 5090).
+add_executable(system system/system.c)
+target_link_libraries(system PRIVATE bare)
+target_compile_options(system PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(system PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/system/assets")
+bare_add_shaders(system OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/system/generated/system_shaders.h SOURCES
+    screenplus/shaders/canvas2d.glsl)
+
+# Rain: Screen+'s sample (rocksdanister's Rainy Window, modified: rain or snow in a picture in 3D).
+add_executable(rain rain/rain.c)
+target_link_libraries(rain PRIVATE bare)
+target_compile_options(rain PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(rain PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/rain/assets")
+bare_add_shaders(rain OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/rain/generated/rain_shaders.h SOURCES rain/shaders/rain.glsl)
+
+# Triangles & Light: Screen+'s sample (Maksim Surguy's triangle pattern on Flat Surface Shader).
+add_executable(triangles triangles/triangles.c)
+target_link_libraries(triangles PRIVATE bare)
+target_compile_options(triangles PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(triangles OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/triangles/generated/triangles_shaders.h SOURCES
+    screenplus/shaders/canvas2d.glsl)
+
+# The Hill: Screen+'s sample (ykob's GLSL Hills under the time and date).
+add_executable(hill hill/hill.c)
+target_link_libraries(hill PRIVATE bare)
+target_compile_options(hill PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(hill PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/hill/assets")
+bare_add_shaders(hill OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/hill/generated/hill_shaders.h SOURCES
+    hill/shaders/hill.glsl screenplus/shaders/canvas2d.glsl)
+
+# Parallax.js: Screen+'s sample (the parallax.js demo scene, its CSS and animations).
+add_executable(parallax parallax/parallax.c)
+target_link_libraries(parallax PRIVATE bare)
+target_compile_options(parallax PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(parallax PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/parallax/assets")
+bare_add_shaders(parallax OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parallax/generated/parallax_shaders.h SOURCES parallax/shaders/sprite.glsl)
+
+# Periodic Table: Screen+'s sample (Mike Golus's CodePen, its CSS: glowing tiles, hover, the model, the key).
+add_executable(periodic periodic/periodic.c)
+target_link_libraries(periodic PRIVATE bare)
+target_compile_options(periodic PRIVATE ${BARE_WARNINGS})
+bare_add_shaders(periodic OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/periodic/generated/periodic_shaders.h SOURCES
+    periodic/shaders/blur.glsl screenplus/shaders/canvas2d.glsl)
+
+add_executable(medusae medusae/medusae.c)
+target_link_libraries(medusae PRIVATE bare)
+target_compile_options(medusae PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(medusae PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/medusae/assets")
+bare_add_shaders(medusae OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/medusae/generated/medusae_shaders.h SOURCES
+    medusae/shaders/mesh.glsl medusae/shaders/line.glsl medusae/shaders/dust.glsl medusae/shaders/post.glsl medusae/shaders/dirt.glsl)
+
+add_executable(livingroom livingroom/livingroom.c)
+target_link_libraries(livingroom PRIVATE bare)
+target_compile_options(livingroom PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(livingroom PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/livingroom/assets")
+bare_add_shaders(livingroom OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/livingroom/generated/livingroom_shaders.h SOURCES
+    screenplus/shaders/three.glsl screenplus/shaders/three_page.glsl)
+
+add_executable(musictv musictv/musictv.c)
+target_link_libraries(musictv PRIVATE bare)
+target_compile_options(musictv PRIVATE ${BARE_WARNINGS})
+target_compile_definitions(musictv PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/musictv/assets")
+bare_add_shaders(musictv OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/musictv/generated/musictv_shaders.h SOURCES
+    screenplus/shaders/three.glsl screenplus/shaders/three_page.glsl screenplus/shaders/pmrem.glsl)
+
+add_executable(nullsaint nullsaint/nullsaint.c)
+target_link_libraries(nullsaint PRIVATE bare)
+target_compile_options(nullsaint PRIVATE ${BARE_WARNINGS})
+target_include_directories(nullsaint SYSTEM PRIVATE ${stb_SOURCE_DIR})
+target_compile_definitions(nullsaint PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/nullsaint/assets")
+bare_add_shaders(nullsaint OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/nullsaint/generated/nullsaint_shaders.h SOURCES
+    nullsaint/shaders/ns_copy.glsl nullsaint/shaders/ns_mosh.glsl nullsaint/shaders/ns_bright.glsl nullsaint/shaders/ns_blur.glsl
+    nullsaint/shaders/ns_final.glsl nullsaint/shaders/ns_present.glsl screenplus/shaders/ctx2d.glsl)
+
+# Screen+ app wallpapers answer --screenplus-properties with their settings (see screenplus/embed_properties.cmake)
+include(screenplus/embed_properties.cmake)
+foreach(sp_app aurora koi singularity fluid matrix tunnel system rain triangles hill parallax periodic medusae livingroom musictv nullsaint)
+    if(TARGET ${sp_app})
+        screenplus_embed_properties(${sp_app} "${CMAKE_CURRENT_SOURCE_DIR}/${sp_app}/LivelyProperties.json")
+        if(MSVC)
+            target_compile_definitions(${sp_app} PRIVATE _CRT_SECURE_NO_WARNINGS)   # screenplus_wallpaper.h: fopen, sscanf
+        endif()
+    endif()
+endforeach()

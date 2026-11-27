@@ -753,8 +753,14 @@ static void create_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im) {
         return;
     }
     Uint32 levels = 1;
-    if (im->mipmaps && im->renderable && !depth)
+    if (im->mipmaps && !depth)
         while ((im->width >> levels) > 0 || (im->height >> levels) > 0) levels++;
+    if (!depth && !im->renderable && (im->srgb || levels > 1)) {   /* bare_texture; mips are made by drawing */
+        SDL_GPUTextureFormat want = im->srgb ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        SDL_GPUTextureUsageFlags u = SDL_GPU_TEXTUREUSAGE_SAMPLER | (levels > 1 ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
+        if (SDL_GPUTextureSupportsFormat(gpu.device, want, SDL_GPU_TEXTURETYPE_2D, u)) f = want, usage = u;
+        else levels = 1;
+    }
     t->tex = make_texture(im->width, im->height, f, usage, levels);
     if (!t->tex) {
         SDL_Log("bare: creating a %dx%d image failed: %s", im->width, im->height, SDL_GetError());
@@ -825,6 +831,7 @@ static void upload_image(SDL_GPUCommandBuffer *cmd, const BareGpuImage *im, Uint
     SDL_GPUTextureRegion region = { .texture = t->tex, .w = (Uint32)t->w, .h = (Uint32)t->h, .d = 1 };
     SDL_UploadToGPUTexture(copy, &src, &region, false);
     SDL_EndGPUCopyPass(copy);
+    if (t->levels > 1) SDL_GenerateMipmapsForGPUTexture(cmd, t->tex);
 }
 
 static UserShader *shader_slot(Uint32 id) {

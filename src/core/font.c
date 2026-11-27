@@ -12,7 +12,9 @@
  * packed into one R8 atlas by a shelf packer. New glyphs become one upload
  * per frame covering everything that changed. */
 #include "internal.h"
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ATLAS_START 1024
@@ -179,6 +181,77 @@ void bare_font_add_face(BareFont family, BareFont face, int weight, bool italic)
     f->family = ctx->fonts[family].family;
     f->weight = (int16_t)(weight > 0 ? weight : 400);
     f->italic = italic;
+}
+
+/* ---- text into memory ------------------------------------------------------------ */
+
+/* Two walks over the shaped run: the first finds the box every glyph covers
+ * (pen positions kept fractional, as the glyph cache does), the second adds
+ * each glyph's coverage into it. */
+unsigned char *bare_text_pixels(const char *text, BareFont font, float size, int *width, int *height, int *x,
+                                int *y, float *advance) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    if (x) *x = 0;
+    if (y) *y = 0;
+    if (advance) *advance = 0;
+    BareContext *ctx = bare_ctx_current();
+    if (!ctx || !text || !(size > 0)) return NULL;
+    void *h = bare__font_handle(ctx, &font);
+    if (!h) return NULL;
+    const BareFontBackend *fb = bare__font_backend(ctx);
+    int len = (int)strlen(text);
+    if (!len) return NULL;
+    BareShapedGlyph *g = malloc((size_t)len * sizeof *g);
+    if (!g) return NULL;
+    int n = fb->shape(h, size, text, len, g, len);
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+    float pen = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        unsigned char *out = NULL;
+        int w = x1 - x0, hh = y1 - y0;
+        if (pass == 1) {
+            if (w <= 0 || hh <= 0) break;
+            out = calloc((size_t)w * (size_t)hh, 1);
+            if (!out) break;
+        }
+        pen = 0;
+        for (int i = 0; i < n; i++) {
+            float fx = floorf(pen);
+            BareGlyphBitmap bm;
+            if (fb->rasterize(h, g[i].glyph, size, pen - fx, &bm) && bm.width > 0) {
+                int gx = (int)fx + bm.left + (int)lroundf(g[i].x_offset), gy = bm.top + (int)lroundf(g[i].y_offset);
+                if (pass == 0) {
+                    if (gx < x0) x0 = gx;
+                    if (gy < y0) y0 = gy;
+                    if (gx + bm.width > x1) x1 = gx + bm.width;
+                    if (gy + bm.height > y1) y1 = gy + bm.height;
+                } else {
+                    for (int r = 0; r < bm.height; r++) {
+                        unsigned char *d = out + (size_t)(gy - y0 + r) * (size_t)w + (gx - x0);
+                        const unsigned char *s = bm.pixels + (size_t)r * (size_t)bm.stride;
+                        for (int c = 0; c < bm.width; c++) {
+                            int v = d[c] + s[c];
+                            d[c] = (unsigned char)(v > 255 ? 255 : v);
+                        }
+                    }
+                }
+            }
+            pen += g[i].advance;
+        }
+        if (pass == 1) {
+            free(g);
+            if (width) *width = w;
+            if (height) *height = hh;
+            if (x) *x = x0;
+            if (y) *y = y0;
+            if (advance) *advance = pen;
+            return out;
+        }
+    }
+    free(g);
+    if (advance) *advance = pen;
+    return NULL;
 }
 
 /* ---- the glyph cache ---------------------------------------------------------- */

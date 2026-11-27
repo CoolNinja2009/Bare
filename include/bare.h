@@ -304,6 +304,30 @@ BareFont  bare_font_from_memory(const void *data, int size);      /* data must o
 void      bare_font_add_face(BareFont family, BareFont face, int weight, bool italic);
 BareImage bare_image_load(const char *path);                      /* PNG, JPEG, BMP, GIF, TGA; 0 on failure */
 BareImage bare_image_from_pixels(int width, int height, const void *rgba8);  /* pixels are copied */
+/* Text into memory, as canvas 2D's fillText (for atlases and canvases): one line
+ * of `text` in `font` at `size` pixels as an 8-bit coverage mask, *width x
+ * *height bytes, malloc'd (free() it); NULL when nothing is visible. *x, *y:
+ * the mask's top-left corner from the pen on the baseline (y down); *advance:
+ * how far the pen moves. Pointers may be NULL. Needs the window open. */
+BareImage bare_image_from_memory(const void *data, int size);     /* a file's bytes (PNG, JPEG, ...); 0 on failure */
+/* A file's bytes to RGBA8 pixels in memory, malloc'd (free() them); NULL on failure. */
+unsigned char *bare_image_decode(const void *data, int size, int *width, int *height);
+unsigned char *bare_text_pixels(const char *text, BareFont font, float size, int *width, int *height, int *x, int *y,
+                                float *advance);
+/* Pixels as a WebGL texture, for 3D scenes and shaders: .mipmaps gives it a
+ * full mip chain, remade after every bare_image_update, sampled trilinearly
+ * (generateMipmap with LINEAR_MIPMAP_LINEAR); .srgb stores it as SRGB8_ALPHA8,
+ * so shaders read linear values, decoded before filtering (three.js's
+ * sRGBEncoding maps); .repeat wraps (REPEAT), .nearest skips filtering.
+ *     BareImage wood = bare_texture(.width = w, .height = h, .rgba8 = px,
+ *                                   .mipmaps = true, .srgb = true, .repeat = true); */
+typedef struct BareTexture {
+    int width, height;
+    const void *rgba8;   /* width * height * 4 bytes, copied */
+    bool mipmaps, srgb, repeat, nearest;
+} BareTexture;
+BareImage bare_texture_(const BareTexture *texture);
+#define bare_texture(...) bare_texture_(&(BareTexture){ __VA_ARGS__ })
 void      bare_image_free(BareImage image);                       /* images and canvases */
 BareVec2  bare_image_size(BareImage image);                       /* in pixels; {0, 0} if unknown */
 /* New pixels for an image made by bare_image_from_pixels or bare_image_load,

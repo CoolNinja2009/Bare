@@ -1,0 +1,155 @@
+{
+  "weather": {
+    "type": "dropdown",
+    "value": 0,
+    "text": "Weather",
+    "items": [
+      "Rain",
+      "Snow"
+    ]
+  },
+  "sceneAmount": {
+    "max": 100,
+    "min": 0,
+    "text": "Falling in the distance",
+    "type": "slider",
+    "value": 60
+  },
+  "splashAmount": {
+    "max": 100,
+    "min": 0,
+    "text": "Drops landing",
+    "type": "slider",
+    "value": 30
+  },
+  "depthStrength": {
+    "max": 100,
+    "min": 0,
+    "text": "3D depth",
+    "type": "slider",
+    "value": 50
+  },
+  "rainIntensity": {
+    "max": 100,
+    "min": 0,
+    "text": "Intensity",
+    "type": "slider",
+    "value": 40
+  },
+  "rainSpeed": {
+    "max": 100,
+    "min": 0,
+    "text": "Speed",
+    "type": "slider",
+    "value": 25
+  },
+  "brightness": {
+    "max": 100,
+    "min": 0,
+    "text": "Brightness",
+    "type": "slider",
+    "value": 75
+  },
+  "rainNormal": {
+    "max": 100,
+    "min": 0,
+    "text": "Normal",
+    "type": "slider",
+    "value": 50
+  },
+  "rainZoom": {
+    "max": 300,
+    "min": 10,
+    "text": "Zoom",
+    "type": "slider",
+    "value": 261
+  },
+  "mediaSelect": {
+    "type": "folderDropdown",
+    "value": "mountain-surrounded-with-fog-1772973.jpg",
+    "text": "Background",
+    "filter": "*.jpg|*.jpeg|*.jfif|*.png|*.webp|*.bmp|*.gif|*.avif|*.webm|*.mp4",
+    "folder": "media"
+  },
+  "mediaScaling": {
+    "type": "dropdown",
+    "value": 1,
+    "text": "Scaling",
+    "items": [
+      "Stretch",
+      "Fill"
+    ]
+  },
+  "soundSelect": {
+    "type": "folderDropdown",
+    "value": "rain.ogg",
+    "text": "Sound",
+    "filter": "*.ogg|*.opus|*.mp3|*.wav|*.m4a|*.aac|*.flac|*.weba",
+    "folder": "sounds"
+  },
+  "soundVolume": {
+    "max": 100,
+    "min": 0,
+    "text": "Volume",
+    "type": "slider",
+    "value": 50
+  },
+  "blurQuality": {
+    "type": "dropdown",
+    "value": 1,
+    "text": "Blur Quality",
+    "items": [
+      "Off",
+      "Low",
+      "High",
+      "Very High"
+    ]
+  },
+  "blurIntensity": {
+    "max": 100,
+    "min": 0,
+    "text": "Glass fog",
+    "type": "slider",
+    "value": 28
+  },
+  "parallaxIntensity": {
+    "max": 5,
+    "min": 0,
+    "text": "Parallax",
+    "type": "slider",
+    "value": 1
+  },
+  "displayScaling": {
+    "max": 1,
+    "min": 0.1,
+    "step": 0.1,
+    "text": "Scaling",
+    "type": "slider",
+    "value": 1
+  },
+  "animateChk": {
+    "type": "checkbox",
+    "value": false,
+    "text": "Panning"
+  },
+  "postProcessingChk": {
+    "type": "checkbox",
+    "value": true,
+    "text": "Post Processing"
+  },
+  "lightningChk": {
+    "type": "checkbox",
+    "value": false,
+    "text": "Lightning"
+  },
+  "fpsLock": {
+    "type": "checkbox",
+    "value": true,
+    "text": "30FPS Lock"
+  },
+  "debug": {
+    "type": "checkbox",
+    "value": false,
+    "text": "Debug"
+  }
+}

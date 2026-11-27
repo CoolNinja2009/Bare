@@ -131,7 +131,9 @@ typedef struct BareGpuImage {
     BareFormat  format;
     bool        nearest, repeat;
     bool        renderable;    /* a canvas: passes draw into it */
-    bool        mipmaps;       /* a canvas with a mip chain, rebuilt after each pass or draw into it */
+    bool        mipmaps;       /* a canvas with a mip chain, rebuilt after each pass or draw into it;
+                                  an image (bare_texture): rebuilt after each upload */
+    bool        srgb;          /* bare_texture: sRGB, decoded to linear when sampled */
     const void *pixels;        /* IMAGE_UPLOAD */
 } BareGpuImage;
 

@@ -176,6 +176,29 @@ BareImage bare_image_from_pixels(int width, int height, const void *rgba8) {
     return id;
 }
 
+BareImage bare_texture_(const BareTexture *t) {
+    BareContext *ctx = need_ctx("bare_texture");
+    if (!ctx || !valid_size(ctx, "bare_texture", t->width, t->height)) return 0;
+    if (!t->rgba8) {
+        bare__log(ctx, "bare_texture: no pixels");
+        return 0;
+    }
+    BareGpuOp *create = push_op(ctx, BARE_GPU_IMAGE_CREATE);
+    if (!create) return 0;
+    BareImage id = new_image(ctx, t->width, t->height, BARE_RGBA8, false);
+    if (!id) { ctx->gpu_pending.count--; return 0; }
+    BareGpuImage desc = { .id = id, .width = t->width, .height = t->height, .format = BARE_RGBA8,
+                          .nearest = t->nearest, .repeat = t->repeat, .srgb = t->srgb, .mipmaps = t->mipmaps };
+    create->as.image = desc;
+    intptr_t data = push_data(ctx, t->rgba8, t->width * t->height * 4);
+    BareGpuOp *upload = data > 0 ? push_op(ctx, BARE_GPU_IMAGE_UPLOAD) : NULL;   /* may move `create` */
+    if (upload) {
+        upload->as.image = desc;
+        upload->as.image.pixels = as_offset(data);
+    }
+    return id;
+}
+
 BareImage bare_image_frames(int width, int height, int frames, const void *rgba8) {
     BareContext *ctx = need_ctx("bare_image_frames");
     if (frames < 1) frames = 1;

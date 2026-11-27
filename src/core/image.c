@@ -3,6 +3,8 @@
  * The decoded pixels go through bare_image_from_pixels, which copies them into
  * the GPU queue, so they are freed right away. */
 #include "internal.h"
+#include <stdlib.h>
+#include <string.h>
 
 /* stb_image's allocation hooks have no user pointer: they use the current
  * context's allocator (bare_image_load only runs with one). */
@@ -55,4 +57,33 @@ BareImage bare_image_load(const char *path) {
     BareImage image = bare_image_from_pixels(w, h, pixels);
     stbi_image_free(pixels);
     return image;
+}
+
+BareImage bare_image_from_memory(const void *data, int size) {
+    BareContext *ctx = bare_ctx_current();
+    if (!ctx) { bare__log(NULL, "bare_image_from_memory called before bare_window"); return 0; }
+    int w = 0, h = 0, n = 0;
+    unsigned char *pixels = data && size > 0 ? stbi_load_from_memory(data, size, &w, &h, &n, 4) : NULL;
+    if (!pixels) {
+        bare__log(ctx, "bare_image_from_memory: can't decode %d bytes (%s)", size, data ? stbi_failure_reason() : "no data");
+        return 0;
+    }
+    BareImage image = bare_image_from_pixels(w, h, pixels);
+    stbi_image_free(pixels);
+    return image;
+}
+
+unsigned char *bare_image_decode(const void *data, int size, int *width, int *height) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    if (!bare_ctx_current() || !data || size <= 0) return NULL;
+    int w = 0, h = 0, n = 0;
+    unsigned char *pixels = stbi_load_from_memory(data, size, &w, &h, &n, 4);
+    if (!pixels) return NULL;
+    unsigned char *out = malloc((size_t)w * (size_t)h * 4);
+    if (out) memcpy(out, pixels, (size_t)w * (size_t)h * 4);
+    stbi_image_free(pixels);
+    if (out && width) *width = w;
+    if (out && height) *height = h;
+    return out;
 }
