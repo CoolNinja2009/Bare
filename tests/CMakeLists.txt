@@ -39,3 +39,9 @@ else()
     target_link_libraries(test_media PRIVATE m)
 endif()
 add_test(NAME media COMMAND test_media)
+
+# bare_sound_loop / bare_sound_volume on SDL's dummy audio driver (nothing is heard).
+add_executable(test_sound test_sound.c)
+target_link_libraries(test_sound PRIVATE bare ${BARE_SDL3_TARGET})
+target_compile_options(test_sound PRIVATE ${BARE_WARNINGS})
+add_test(NAME sound COMMAND test_sound)

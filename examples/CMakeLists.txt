@@ -119,6 +119,7 @@ add_executable(rain rain/rain.c)
 target_link_libraries(rain PRIVATE bare)
 target_compile_options(rain PRIVATE ${BARE_WARNINGS})
 target_compile_definitions(rain PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/rain/assets")
+target_include_directories(rain SYSTEM PRIVATE ${stb_SOURCE_DIR})   # stb_vorbis: the rain sound (Ogg)
 bare_add_shaders(rain OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/rain/generated/rain_shaders.h SOURCES rain/shaders/rain.glsl)
 
 # Triangles & Light: Screen+'s sample (Maksim Surguy's triangle pattern on Flat Surface Shader).

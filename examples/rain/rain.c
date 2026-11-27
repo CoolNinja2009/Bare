@@ -7,7 +7,9 @@
  * canvas scaled 1.09 and faded in. From the depth map the page makes a landing
  * map, where a drop at each distance meets the picture; so does this. The
  * mouse moves the picture in depth (smoothed), or slides it when it has no
- * depth map. The page's looping rain sound is not played.
+ * depth map. The page's sound loops as it did: sounds/<soundSelect> (Ogg through
+ * stb_vorbis, anything else through bare_sound_load) at soundVolume squared,
+ * times Screen+'s volume; silent while paused.
  *
  * A Screen+ app wallpaper: settings are the Customise panel (LivelyProperties.json
  * beside the exe), sent by Screen+ on stdin (see ../screenplus/screenplus_wallpaper.h);
@@ -20,6 +22,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "stb_vorbis.c"
 
 #define RESET_AFTER 21600.0   /* the page restarts its clock every 6 hours */
 #define LAND_BINS 32
@@ -34,6 +37,9 @@ static struct {
 } cfg = { 0.4, 0.25, 0.8, 0.5, 2.61, 0.5, 0.02, 0.6, 0.3, 1, 1, 16, 0, false, true, false, true, false, "" };
 
 static bool media_changed;
+static char sound_file[1024] = "rain.ogg";
+static double sound_volume = 0.5;   /* the page's slider, 0..1; heard as its square */
+static bool sound_changed;
 
 static void set_property(const SpMessage *m) {
     const char *n = m->name;
@@ -56,7 +62,11 @@ static void set_property(const SpMessage *m) {
     else if (!strcmp(n, "parallaxIntensity")) cfg.parallax = v;
     else if (!strcmp(n, "fpsLock")) cfg.fps_lock = sp_bool(m);
     else if (!strcmp(n, "displayScaling")) cfg.scaling = fmin(1, fmax(0.1, v));
-    else if (!strcmp(n, "mediaSelect")) {
+    else if (!strcmp(n, "soundVolume")) sound_volume = fmin(1, fmax(0, v / 100));
+    else if (!strcmp(n, "soundSelect")) {
+        snprintf(sound_file, sizeof sound_file, "%s", m->value);
+        sound_changed = true;
+    } else if (!strcmp(n, "mediaSelect")) {
         snprintf(cfg.media, sizeof cfg.media, "%s", m->value);
         media_changed = true;
     }
@@ -149,6 +159,41 @@ static void load_media(void) {
     }
 }
 
+/* ---- the sound ------------------------------------------------------------------- */
+
+/* sounds/<name> beside the exe (or a full path): Ogg Vorbis decoded here, so it
+ * loops sample-exactly as the page's decoded buffer did; other files as the
+ * system reads them. */
+static BareSound load_sound(const char *v) {
+    if (!*v) return 0;
+    char path[4300], rel[1100];
+    FILE *f = fopen(v, "rb");
+    if (f) fclose(f), snprintf(path, sizeof path, "%s", v);
+    else {
+        snprintf(rel, sizeof rel, "%s%s", strchr(v, '/') || strchr(v, '\\') ? "" : "sounds/", v);
+        for (char *c = rel; *c; c++) if (*c == '\\') *c = '/';
+        snprintf(path, sizeof path, "%s", sp_asset(rel));
+    }
+    const char *dot = strrchr(path, '.');
+    if (!dot || (strcmp(dot, ".ogg") && strcmp(dot, ".OGG"))) return bare_sound_load(path);
+    int channels = 0, rate = 0;
+    short *pcm = NULL;
+    int frames = stb_vorbis_decode_filename(path, &channels, &rate, &pcm);
+    BareSound s = 0;
+    if (frames > 0 && pcm && channels >= 1) {
+        int out_ch = channels > 1 ? 2 : 1;
+        float *buf = malloc((size_t)frames * out_ch * sizeof *buf);
+        if (buf) {
+            for (int i = 0; i < frames; i++)
+                for (int c = 0; c < out_ch; c++) buf[(size_t)i * out_ch + c] = pcm[(size_t)i * channels + c] / 32768.0f;
+            s = bare_sound(buf, frames, out_ch, rate);
+            free(buf);
+        }
+    }
+    free(pcm);
+    return s;
+}
+
 typedef struct Params {
     float p[7][4];
     float lv[MAX_LEVELS][4];
@@ -168,6 +213,9 @@ int main(int argc, char **argv) {
     double clock = 0, last = -1, last_draw = -1e9, shown_at = -1;
     double mx = 0, my = 0, tx = 0, ty = 0;
     BareVec2 last_mouse = { -1e9f, -1e9f }, offset = { 0, 0 };
+    BareSound sound = 0;
+    bool sound_loaded = false, sound_playing = false;
+    double host_volume = sp.parent ? 0 : 100, gain_now = -1;   /* Screen+ says its volume first; by hand: full */
 
     while (bare_frame()) {
         double now = bare_time();
@@ -175,8 +223,20 @@ int main(int argc, char **argv) {
         while (sp_next(&m)) {
             if (m.kind == SP_PROPERTY) set_property(&m);
             else if (m.kind == SP_PAUSE) paused = sp_bool(&m);
+            else if (m.kind == SP_VOLUME) host_volume = sp_num(&m);
         }
         if (media_changed || !loaded) load_media(), media_changed = false, loaded = true;
+
+        /* the sound: loaded when first heard, looping while heard, stopped when not */
+        double gain = paused ? 0 : sound_volume * sound_volume * fmin(1, fmax(0, host_volume / 100));
+        if (sound_changed) {
+            if (sound) bare_sound_free(sound);
+            sound = 0, sound_loaded = sound_playing = false, sound_changed = false;
+        }
+        if (gain > 0 && !sound_loaded) sound = load_sound(sound_file), sound_loaded = true;
+        if (gain <= 0 && sound_playing) bare_sound_stop(sound), sound_playing = false;
+        else if (gain > 0 && sound && !sound_playing) bare_sound_loop(sound, (float)gain), sound_playing = true, gain_now = gain;
+        else if (sound_playing && gain != gain_now) bare_sound_volume(sound, (float)gain), gain_now = gain;
         BareVec2 win = bare_window_size();
         int w = (int)fmax(1, floor(win.x * cfg.scaling)), h = (int)fmax(1, floor(win.y * cfg.scaling));
         if (w != cw || h != ch) {

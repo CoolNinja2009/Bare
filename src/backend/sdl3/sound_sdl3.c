@@ -12,6 +12,7 @@
 #include "bare.h"
 #include "backend/media.h"
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,6 +29,7 @@ typedef struct Voice {
     BareSound sound;     /* playing this (0: idle) */
     long next;           /* the next frame to give it */
     Uint64 started;      /* play order: the latest play of a sound is the one bare_sound_position reports */
+    bool loop;           /* bare_sound_loop: back to the start at the end, without a gap */
 } Voice;
 
 static Sound g_sounds[MAX_SOUNDS];
@@ -40,7 +42,7 @@ static Uint64 g_plays;
 static bool g_failed;            /* no audio here: don't keep trying */
 
 /* Fixed-clock plays: which sound, from where, and when (bare_time). */
-typedef struct Virtual { BareSound sound; double from, t0; Uint64 started; } Virtual;
+typedef struct Virtual { BareSound sound; double from, t0; Uint64 started; bool loop; } Virtual;
 static bool g_virtual;
 static Virtual g_virt[VOICES];
 
@@ -119,13 +121,22 @@ static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, in
     (void)total;
     Voice *v = user;
     const Sound *s = get(v->sound);
-    if (!s || v->next >= s->frames) return;
+    if (!s) return;
     long want = additional / (int)(sizeof(float) * (size_t)s->channels);
     if (want < FEED) want = FEED;
-    if (want > s->frames - v->next) want = s->frames - v->next;
-    SDL_PutAudioStreamData(stream, s->data + (size_t)v->next * (size_t)s->channels,
-                           (int)(want * s->channels * (long)sizeof(float)));
-    v->next += want;
+    while (want > 0) {
+        if (v->next >= s->frames) {
+            if (!v->loop) {   /* the end: the resampler gives up what it holds, so the stream drains */
+                SDL_FlushAudioStream(stream);
+                return;
+            }
+            v->next = 0;
+        }
+        long n = want < s->frames - v->next ? want : s->frames - v->next;
+        SDL_PutAudioStreamData(stream, s->data + (size_t)v->next * (size_t)s->channels,
+                               (int)(n * s->channels * (long)sizeof(float)));
+        v->next += n, want -= n;
+    }
 }
 
 /* Frames given to the voice but not yet played (roughly: the device's own buffer isn't counted). */
@@ -137,7 +148,7 @@ static long queued_frames(const Voice *v, const Sound *s) {
 static bool busy(Voice *v) {
     if (!v->stream || !v->sound) return false;
     const Sound *s = get(v->sound);
-    if (!s || (v->next >= s->frames && SDL_GetAudioStreamQueued(v->stream) == 0)) {
+    if (!s || (!v->loop && v->next >= s->frames && SDL_GetAudioStreamQueued(v->stream) == 0)) {
         v->sound = 0;
         return false;
     }
@@ -205,11 +216,12 @@ static bool open_device(void) {
 static double virtual_position(const Virtual *v) {
     const Sound *s = get(v->sound);
     if (!s) return -1;
-    double at = v->from + (bare_time() - v->t0);
-    return at < (double)s->frames / s->rate ? at : -1;
+    double at = v->from + (bare_time() - v->t0), length = (double)s->frames / s->rate;
+    if (v->loop) return fmod(at, length);
+    return at < length ? at : -1;
 }
 
-void bare_sound_play_at(BareSound sound, float volume, double seconds) {
+static void play(BareSound sound, float volume, double seconds, bool loop) {
     const Sound *s = get(sound);
     if (!s || volume <= 0 || !ensure_lock()) return;
     long from = seconds > 0 ? (long)(seconds * s->rate) : 0;
@@ -217,7 +229,7 @@ void bare_sound_play_at(BareSound sound, float volume, double seconds) {
     if (g_virtual) {
         for (int i = 0; i < VOICES; i++) {
             if (g_virt[i].sound && virtual_position(&g_virt[i]) >= 0) continue;
-            g_virt[i] = (Virtual){ sound, (double)from / s->rate, bare_time(), ++g_plays };
+            g_virt[i] = (Virtual){ sound, (double)from / s->rate, bare_time(), ++g_plays, loop };
             break;
         }
         return;
@@ -248,6 +260,7 @@ void bare_sound_play_at(BareSound sound, float volume, double seconds) {
             voice->sound = sound;
             voice->next = from;
             voice->started = ++g_plays;
+            voice->loop = loop;
             SDL_UnlockAudioStream(voice->stream);
         }
         g_last = SDL_GetTicks();
@@ -256,7 +269,18 @@ void bare_sound_play_at(BareSound sound, float volume, double seconds) {
     SDL_UnlockMutex(g_lock);
 }
 
-void bare_sound_play(BareSound sound, float volume) { bare_sound_play_at(sound, volume, 0); }
+void bare_sound_play_at(BareSound sound, float volume, double seconds) { play(sound, volume, seconds, false); }
+void bare_sound_play(BareSound sound, float volume) { play(sound, volume, 0, false); }
+void bare_sound_loop(BareSound sound, float volume) { play(sound, volume, 0, true); }
+
+void bare_sound_volume(BareSound sound, float volume) {
+    if (!get(sound) || !ensure_lock()) return;
+    SDL_LockMutex(g_lock);
+    for (int i = 0; i < VOICES; i++)
+        if (g_voice[i].sound == sound && g_voice[i].stream)
+            SDL_SetAudioStreamGain(g_voice[i].stream, volume < 0 ? 0 : volume > 1 ? 1 : volume);
+    SDL_UnlockMutex(g_lock);
+}
 
 void bare_sound_stop(BareSound sound) {
     if (!get(sound) || !ensure_lock()) return;
@@ -285,6 +309,7 @@ double bare_sound_position(BareSound sound) {
         long played = v->next - queued_frames(v, s);
         SDL_UnlockAudioStream(v->stream);
         latest = v->started;
+        if (v->loop) played = ((played % s->frames) + s->frames) % s->frames;
         at = (double)(played > 0 ? played : 0) / s->rate;
     }
     SDL_UnlockMutex(g_lock);

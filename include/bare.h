@@ -1099,6 +1099,8 @@ void      bare_sound_free(BareSound sound);
  *     bare_sound_stop(song);                          // a pause: play_at(position) resumes */
 BareSound bare_sound_load(const char *path);
 void      bare_sound_play_at(BareSound sound, float volume, double seconds);
+void      bare_sound_loop(BareSound sound, float volume);    /* over and over without a gap, until stopped */
+void      bare_sound_volume(BareSound sound, float volume);  /* every play of it, from now on (0..1) */
 void      bare_sound_stop(BareSound sound);             /* every play of it */
 /* Seconds into its latest play that is still playing; -1 when it isn't playing. */
 double    bare_sound_position(BareSound sound);
