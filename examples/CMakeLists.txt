@@ -196,3 +196,18 @@ foreach(sp_app aurora koi singularity fluid matrix tunnel system rain triangles 
         endif()
     endif()
 endforeach()
+
+# Every example carries Bare's icon on Windows: Explorer and the taskbar show it, and SDL gives the window the exe's
+# first icon. Kept last so it reaches every executable above.
+if(WIN32)
+    enable_language(RC)
+    set(bare_icon_rc ${CMAKE_CURRENT_BINARY_DIR}/bare_icon.rc)
+    file(CONFIGURE OUTPUT ${bare_icon_rc} CONTENT "1 ICON \"${PROJECT_SOURCE_DIR}/assets/icon/bare.ico\"\n")
+    get_property(example_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t ${example_targets})
+        get_target_property(t_type ${t} TYPE)
+        if(t_type STREQUAL "EXECUTABLE")
+            target_sources(${t} PRIVATE ${bare_icon_rc})
+        endif()
+    endforeach()
+endif()

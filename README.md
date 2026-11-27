@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon/bare-512.png" width="160" alt="Bare"></p>
+
 # Bare
 
 A UI framework in pure C11 for native apps that want what HTML + CSS + JS give you (flexible layout, rich styling,
@@ -64,3 +66,7 @@ by Pavel Dobryakov (MIT licence, see [examples/fluid/LICENSE.txt](examples/fluid
 
 The built-in fonts are [Inter](https://github.com/rsms/inter) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono),
 both under the SIL Open Font License (see [assets/fonts](assets/fonts)).
+
+## Licence
+
+Bare is released under the [MIT licence](LICENSE). The logo and icon are in [assets/icon](assets/icon).

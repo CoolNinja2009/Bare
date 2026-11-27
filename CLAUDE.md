@@ -72,6 +72,7 @@ shaders/                  bare.glsl (boxes, glyphs, images), glass.glsl (liquid 
 cmake/compile_shaders.cmake  the bare_shaders target's script (glslc + shadercross -> generated/bare_shaders.h)
 cmake/BareShaders.cmake   bare_add_shaders(): apps' own GLSL -> a header of BareShaderCode (canvas passes)
 assets/fonts/             default font (Inter Latin subset, OFL)
+assets/icon/              the logo (logo.png master), bare.ico (every example exe embeds it on Windows), bare-512.png
 tests/                    headless tests; bare_test.h is the runner
 examples/                 one small program per feature; fluid/ = canvas showcase with its own shaders
 bench/                    benchmarks vs the browser (bench.ps1; README.md has the method and results)
