@@ -7,10 +7,14 @@
  * last asked for. Behind that time frames are dropped; a jump back, or far
  * ahead, seeks. So memory stays a handful of small frames however long the
  * film, and a frame is usually waiting when it's due. */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L   /* clock_gettime (thread.h) */
+#endif
 #include "bare.h"
 #include "backend/media.h"
 #include "thread.h"
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
