@@ -11,6 +11,7 @@
 #define W 64
 #define H 48
 
+#ifdef _WIN32   /* only the Windows test reads the file back */
 static long file_size(const char *path, unsigned char head[8]) {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
@@ -20,6 +21,7 @@ static long file_size(const char *path, unsigned char head[8]) {
     fclose(f);
     return got == 8 ? n : -1;
 }
+#endif
 
 TEST(writes_an_mp4) {
     char path[512];
