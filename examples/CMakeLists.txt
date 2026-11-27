@@ -1,3 +1,8 @@
+# glibc hides POSIX (clock_gettime, readlink in screenplus_wallpaper.h) under -std=c11 unless asked
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_compile_definitions(_DEFAULT_SOURCE)
+endif()
+
 foreach(name hello shapes glass layout buttons cards text scroll styles editor widgets code voice ascii)
     add_executable(${name} ${name}.c)
     target_link_libraries(${name} PRIVATE bare)
