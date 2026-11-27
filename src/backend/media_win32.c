@@ -531,6 +531,7 @@ void bare__media_reader_close(BareMediaReader *m) {
 }
 
 #else
+#include <stddef.h>
 #include "media.h"
 void bare__media_thread_begin(void) {}
 void bare__media_thread_end(void) {}
